@@ -25,8 +25,8 @@ By participating in this project you agree to abide by the
 ## Development Setup
 
 ```bash
-git clone https://github.com/soumalyadev/hyperion-kernel.git
-cd hyperion-kernel
+git clone https://github.com/pro-grammer-SD/hyperion.git
+cd hyperion
 git checkout -b feature/my-improvement
 ```
 

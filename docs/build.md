@@ -64,7 +64,7 @@ cd linux-6.19.6
 
 ```bash
 # Copy config into the kernel source tree
-cp /path/to/hyperion-kernel/hyperion.config .config
+cp /path/to/hyperion/hyperion.config .config
 
 # Resolve any new symbols introduced since config was generated
 make olddefconfig
@@ -79,7 +79,7 @@ make menuconfig
 
 ```bash
 # Apply all Hyperion patches in order
-for patch in /path/to/hyperion-kernel/patches/*.patch; do
+for patch in /path/to/hyperion/patches/*.patch; do
     echo "Applying: $patch"
     git apply "$patch" || patch -p1 < "$patch"
 done
@@ -116,7 +116,7 @@ make modules -j$(nproc)
 sudo make modules_install
 
 # Install kernel headers (required for DKMS)
-sudo bash /path/to/hyperion-kernel/scripts/install-headers.sh
+sudo bash /path/to/hyperion/scripts/install-headers.sh
 
 # Install the kernel image
 sudo make install

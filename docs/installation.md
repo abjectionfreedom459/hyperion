@@ -18,7 +18,7 @@ This installs `.ko` files to `/lib/modules/6.19.6-Hyperion-0.1.0/`.
 ### 2. Install Headers
 
 ```bash
-sudo bash /path/to/hyperion-kernel/scripts/install-headers.sh
+sudo bash /path/to/hyperion/scripts/install-headers.sh
 ```
 
 This:

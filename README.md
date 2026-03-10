@@ -13,7 +13,7 @@
 
 **Author:** Soumalya Das &nbsp;|&nbsp; **License:** MIT &nbsp;|&nbsp; **Base:** Linux 6.19.6 LTS &nbsp;|&nbsp; **Year:** 2026
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/soumalyadev/hyperion-kernel/build.yml?style=flat-square&label=Kernel%20Build)](https://github.com/soumalyadev/hyperion-kernel/actions)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/pro-grammer-SD/hyperion/build.yml?style=flat-square&label=Kernel%20Build)](https://github.com/pro-grammer-SD/hyperion/actions)
 [![Kernel Version](https://img.shields.io/badge/kernel-6.19.6--Hyperion--0.1.0-blue?style=flat-square)](https://kernel.org)
 [![Architecture](https://img.shields.io/badge/arch-x86__64-green?style=flat-square)](#supported-architectures)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
@@ -167,8 +167,8 @@ Hyperion treats module compatibility as a **first-class feature**, not an aftert
 
 ```bash
 # Clone the repository
-git clone https://github.com/soumalyadev/hyperion-kernel.git
-cd hyperion-kernel
+git clone https://github.com/pro-grammer-SD/hyperion.git
+cd hyperion
 
 # Build and install in one shot (interactive config review)
 sudo bash scripts/build-kernel.sh --interactive
@@ -210,7 +210,7 @@ tar -xf linux-6.19.6.tar.xz
 cd linux-6.19.6
 
 # 2. Copy Hyperion config
-cp /path/to/hyperion-kernel/hyperion.config .config
+cp /path/to/hyperion/hyperion.config .config
 
 # 3. Resolve any new config symbols for your exact kernel version
 make olddefconfig
@@ -228,7 +228,7 @@ make modules -j$(nproc)
 sudo make modules_install
 
 # 8. Install headers (DKMS requirement)
-sudo bash /path/to/hyperion-kernel/scripts/install-headers.sh
+sudo bash /path/to/hyperion/scripts/install-headers.sh
 
 # 9. Install kernel
 sudo make install

@@ -17,7 +17,7 @@ Long description of the change.
 Tested-on: hardware description
 Reference: URL to upstream discussion if applicable
 
-Signed-off-by: Soumalya Das <soumalyadev@example.com>
+Signed-off-by: Soumalya Das <geniussantu1983@gmail.com>
 ```
 
 ## Applying Patches
