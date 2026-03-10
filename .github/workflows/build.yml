@@ -9,12 +9,9 @@ permissions:
 
 defaults:
   run:
-    shell: bash -eo pipefail {0}
+    shell: bash -eo pipefail
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # JOB 1 — parse hyperion.config and expose version fields as job outputs
-  # ---------------------------------------------------------------------------
   validate-config:
     name: Validate Hyperion Config
     runs-on: ubuntu-latest
@@ -27,63 +24,58 @@ jobs:
       TAG:          ${{ steps.parse-config.outputs.TAG }}
       HYPERION_VER: ${{ steps.parse-config.outputs.HYPERION_VER }}
       FULL_VERSION: ${{ steps.parse-config.outputs.FULL_VERSION }}
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate and parse hyperion.config
+      - name: Parse hyperion.config
         id: parse-config
         run: |
           python3 - << 'EOF'
-          import sys, os
-
+          import sys
           config = {}
           with open('hyperion.config') as f:
               for line in f:
                   line = line.strip()
-                  if not line or line.startswith('#'): continue
+                  if not line or line.startswith('#'):
+                      continue
                   if '=' not in line:
-                      print(f"Invalid line: {line}"); sys.exit(1)
+                      print(f"Invalid line: {line}")
+                      sys.exit(1)
                   k, v = line.split('=', 1)
                   config[k.strip()] = v.strip().strip('"')
 
           def parse_int(k, d=0):
-              val = config.get(k, '')
-              if val == '': return d
+              v = config.get(k, '')
+              if v == '':
+                  return d
               try:
-                  return int(val)
-              except ValueError:
-                  print(f"Invalid {k}: {val}"); sys.exit(1)
+                  return int(v)
+              except Exception:
+                  print(f"Invalid {k}: {v}")
+                  sys.exit(1)
 
-          VERSION = parse_int('CONFIG_VERSION')
-          PATCH   = parse_int('CONFIG_PATCHLEVEL')
-          SUB     = parse_int('CONFIG_SUBLEVEL')
-          EXTRA   = config.get('CONFIG_EXTRAVERSION', '') or ''
-          LOCAL   = config.get('CONFIG_LOCALVERSION', '') or ''
-
-          # kernel.org omits ".0" sublevel: linux-6.19.tar.xz not linux-6.19.0.tar.xz
+          VERSION      = parse_int('CONFIG_VERSION')
+          PATCH        = parse_int('CONFIG_PATCHLEVEL')
+          SUB          = parse_int('CONFIG_SUBLEVEL')
+          EXTRA        = config.get('CONFIG_EXTRAVERSION', '') or ''
+          LOCAL        = config.get('CONFIG_LOCALVERSION', '') or ''
           FULL_VERSION = f"{VERSION}.{PATCH}" if SUB == 0 else f"{VERSION}.{PATCH}.{SUB}"
-
-          # Extract Hyperion semver from LOCAL ("-Hyperion-0.1.1" -> "0.1.1")
           HYPERION_VER = LOCAL.split('-Hyperion-', 1)[-1] if '-Hyperion-' in LOCAL else LOCAL.lstrip('-')
+          TAG          = HYPERION_VER
 
-          TAG = HYPERION_VER
-
-          out = os.environ['GITHUB_OUTPUT']
-          with open(out, 'a') as f:
-              f.write(f"VERSION={VERSION}\n")
-              f.write(f"PATCH={PATCH}\n")
-              f.write(f"SUB={SUB}\n")
-              f.write(f"EXTRA={EXTRA}\n")
-              f.write(f"LOCAL={LOCAL}\n")
-              f.write(f"TAG={TAG}\n")
-              f.write(f"HYPERION_VER={HYPERION_VER}\n")
-              f.write(f"FULL_VERSION={FULL_VERSION}\n")
+          for k, v in [
+              ('VERSION',      VERSION),
+              ('PATCH',        PATCH),
+              ('SUB',          SUB),
+              ('EXTRA',        EXTRA),
+              ('LOCAL',        LOCAL),
+              ('TAG',          TAG),
+              ('HYPERION_VER', HYPERION_VER),
+              ('FULL_VERSION', FULL_VERSION),
+          ]:
+              print(f"::set-output name={k}::{v}")
           EOF
 
-  # ---------------------------------------------------------------------------
-  # JOB 2 — build the kernel, package all artifacts, publish release
-  # ---------------------------------------------------------------------------
   build-kernel:
     name: Build Linux Hyperion Kernel
     needs: validate-config
@@ -99,434 +91,154 @@ jobs:
       FULL_VERSION:      ${{ needs.validate-config.outputs.FULL_VERSION }}
       KBUILD_BUILD_USER: Soumalya Das
       KBUILD_BUILD_HOST: hyperion-ci
-      # ── SPEED TWEAK 1 ──────────────────────────────────────────────────────
-      # CRITICAL: setting a non-empty timestamp defeats ccache entirely because
-      # every compilation unit that transitively touches <linux/version.h> gets
-      # a unique preprocessed output on every run → 100% cache miss.
-      # Setting it to '' makes the timestamp empty and deterministic so ccache
-      # can actually match previous runs.
-      KBUILD_BUILD_TIMESTAMP: ''
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Print Hyperion ASCII Banner
-        run: |
-          echo " ██╗  ██╗██╗   ██╗██████╗ ███████╗██████╗ ██╗ ██████╗ ███╗   ██╗"
-          echo " ██║  ██║╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗██║██╔═══██╗████╗  ██║"
-          echo " ███████║ ╚████╔╝ ██████╔╝█████╗  ██████╔╝██║██║   ██║██╔██╗ ██║"
-          echo " ██╔══██║  ╚██╔╝  ██╔═══╝ ██╔══╝  ██╔══██╗██║██║   ██║██║╚██╗██║"
-          echo " ██║  ██║   ██║   ██║     ███████╗██║  ██║██║╚██████╔╝██║ ╚████║"
-          echo " ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝"
-          echo " Hyperion Kernel Build CI | Tag: ${TAG_NAME} | User: ${KBUILD_BUILD_USER}"
-
-      # ── Caches ──────────────────────────────────────────────────────────────
-
-      - name: Restore kernel tarball cache
-        id: cache-tar
-        uses: actions/cache@v4
-        with:
-          path: linux-${{ env.FULL_VERSION }}.tar.xz
-          key: kernel-tar-${{ env.FULL_VERSION }}
-
-      - name: Restore kernel source tree cache
-        id: cache-src
-        uses: actions/cache@v4
-        with:
-          # Cache the extracted SOURCE TREE only (no build objects).
-          # The build output lives in a SEPARATE tmpfs directory (see below),
-          # so source and objects are never mixed.
-          path: .cache-src/linux-${{ env.FULL_VERSION }}
-          key: kernel-src-${{ env.FULL_VERSION }}
-
-      - name: Restore build object cache
-        id: cache-build
-        uses: actions/cache@v4
-        with:
-          # ── SPEED TWEAK 2 ──────────────────────────────────────────────────
-          # Cache the persistent copy of build output objects. On a warm hit
-          # these are restored into the tmpfs build dir, so make only
-          # recompiles what changed.
-          path: .cache-build-persistent/linux-${{ env.FULL_VERSION }}
-          key: kernel-build-${{ env.FULL_VERSION }}-hyperion-${{ hashFiles('hyperion.config') }}
-          restore-keys: |
-            kernel-build-${{ env.FULL_VERSION }}-
-
       - name: Restore ccache
         uses: actions/cache@v4
         with:
-          # ── SPEED TWEAK 3 ──────────────────────────────────────────────────
-          # ccache stores compiled translation units. On a warm cache with
-          # KBUILD_BUILD_TIMESTAMP='' this yields ~99% hit rate and reduces
-          # the full build from ~60 min to under 10 min.
           path: ~/.ccache
           key: ccache-${{ env.FULL_VERSION }}-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ env.FULL_VERSION }}-
+          restore-keys: ccache-${{ env.FULL_VERSION }}-
 
-      - name: Restore apt cache
+      - name: Restore kernel build
         uses: actions/cache@v4
         with:
-          path: /var/cache/apt/archives
-          key: apt-kernel-deps-${{ runner.os }}
+          path: build
+          key: kernel-build-${{ env.FULL_VERSION }}-${{ hashFiles('hyperion.config') }}
+          restore-keys: kernel-build-${{ env.FULL_VERSION }}-
 
-      # ── Source ──────────────────────────────────────────────────────────────
-
-      - name: Download kernel source if missing
-        if: steps.cache-tar.outputs.cache-hit != 'true'
-        run: |
-          wget -q --show-progress \
-            https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/linux-${FULL_VERSION}.tar.xz
-
-      - name: Prepare kernel source tree
-        # BUG FIX: The source tree is now extracted to .cache-src/ (read-only
-        # reference tree), completely separate from the build output directory.
-        # Previously the tmpfs was mounted ON TOP OF the extracted source,
-        # wiping all kernel Makefiles/Kconfig files and causing:
-        #   "make: *** No rule to make target 'olddefconfig'"
-        run: |
-          mkdir -p .cache-src
-          if [ ! -d ".cache-src/linux-${FULL_VERSION}" ]; then
-            echo "Extracting kernel source to .cache-src/..."
-            tar -xf linux-${FULL_VERSION}.tar.xz -C .cache-src/
-            EXTRACTED_DIR=$(find .cache-src -maxdepth 1 -mindepth 1 -type d | head -1 | xargs basename)
-            if [ "$EXTRACTED_DIR" != "linux-${FULL_VERSION}" ]; then
-              mv ".cache-src/$EXTRACTED_DIR" ".cache-src/linux-${FULL_VERSION}"
-            fi
-          else
-            echo "Source tree already present (cache hit), skipping extraction."
-          fi
-
-      # ── SPEED TWEAK 4 ──────────────────────────────────────────────────────
-      # Mount a 4 GB tmpfs as the BUILD OUTPUT directory. All .o files,
-      # .cmd files, and intermediate objects are written to RAM, not SSD.
-      # CRITICAL: this is now a SEPARATE directory from the source tree.
-      # Source: .cache-src/linux-${FULL_VERSION}   (disk, preserved across steps)
-      # Build:  .cache-build/linux-${FULL_VERSION} (tmpfs, RAM only)
-      # The kernel's O= flag wires them together cleanly.
-      - name: Mount tmpfs as build output directory
-        run: |
-          mkdir -p .cache-build/linux-${FULL_VERSION}
-          # Only mount if not already a tmpfs (idempotent on re-runs)
-          if ! mountpoint -q .cache-build/linux-${FULL_VERSION}; then
-            sudo mount -t tmpfs -o size=4G,noatime,nodiratime \
-              tmpfs .cache-build/linux-${FULL_VERSION}
-            echo "tmpfs mounted on build output dir (4 GB, noatime)"
-          fi
-          # Restore previously cached build objects into the tmpfs so
-          # incremental builds work (warm cache skips most recompilation)
-          if [ -d .cache-build-persistent/linux-${FULL_VERSION} ]; then
-            echo "Restoring cached build objects into tmpfs..."
-            cp -a .cache-build-persistent/linux-${FULL_VERSION}/. \
-                  .cache-build/linux-${FULL_VERSION}/
-          fi
-
-      # ── Dependencies ────────────────────────────────────────────────────────
+      - name: Restore kernel source
+        uses: actions/cache@v4
+        with:
+          path: build-src
+          key: kernel-src-${{ env.FULL_VERSION }}
+          restore-keys: kernel-src-${{ env.FULL_VERSION }}-
 
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             build-essential libncurses-dev bison flex libssl-dev libelf-dev \
-            dwarves bc pahole git make gcc zstd cpio perl tar rsync \
-            ccache \
-            fakeroot dpkg-dev
-
-          # ── SPEED TWEAK 5 ────────────────────────────────────────────────
-          # Put ccache's shim directory FIRST on PATH. Every call to gcc by
-          # Kbuild is transparently intercepted and served from cache.
-          echo "/usr/lib/ccache" >> $GITHUB_PATH
+            dwarves bc pahole git make gcc zstd cpio perl rsync ccache wget tar
 
       - name: Configure ccache
         run: |
-          # ── SPEED TWEAK 6 ────────────────────────────────────────────────
-          # sloppiness=locale: ignores locale env vars in the cache key
-          # sloppiness=time_macros: ignores __DATE__/__TIME__ in source
-          # sloppiness=include_file_mtime: ignores header mtime, only content
-          # hash_dir=false: prevents the absolute build path from being part
-          #   of the cache key (critical because tmpfs mount path varies)
           ccache --set-config=max_size=5G
           ccache --set-config=compression=true
           ccache --set-config=compression_level=1
           ccache --set-config=sloppiness=locale,time_macros,include_file_mtime
-          ccache --set-config=hash_dir=false
           ccache --zero-stats
 
-      # ── Kernel config ────────────────────────────────────────────────────────
+      - name: Download & extract kernel
+        run: |
+          mkdir -p build-src
+          if [ ! -f "build-src/linux-${FULL_VERSION}.tar.xz" ]; then
+            wget -q \
+              "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/linux-${FULL_VERSION}.tar.xz" \
+              -O "build-src/linux-${FULL_VERSION}.tar.xz"
+          fi
+          tar -xf "build-src/linux-${FULL_VERSION}.tar.xz" -C build-src
+          EXTRACTED_DIR=$(find build-src -maxdepth 1 -mindepth 1 -type d | head -1)
+          mv "$EXTRACTED_DIR" "build-src/linux-${FULL_VERSION}"
+
+      - name: Apply patches if any
+        run: |
+          PATCHES=(patches/*.patch)
+          if [ ${#PATCHES[@]} -gt 0 ]; then
+            cd "build-src/linux-${FULL_VERSION}"
+            for p in "${PATCHES[@]}"; do
+              patch -p1 < "../../$p"
+            done
+          fi
 
       - name: Configure kernel
-        # BUG FIX: Use O= to point make at the separate build output directory.
-        # make is run from the SOURCE tree (.cache-src/linux-*), and all
-        # generated files (including the final .config) land in the OUTPUT
-        # directory (.cache-build/linux-*). This is the canonical Kbuild
-        # pattern for out-of-tree builds and is what makes tmpfs safe to use.
         run: |
-          # Copy our config into the build output dir as .config
-          cp hyperion.config .cache-build/linux-${FULL_VERSION}/.config
-
-          make -C .cache-src/linux-${FULL_VERSION} \
-            O="$(pwd)/.cache-build/linux-${FULL_VERSION}" \
-            olddefconfig \
+          cp hyperion.config "build-src/linux-${FULL_VERSION}/.config"
+          make -C "build-src/linux-${FULL_VERSION}" O="$(pwd)/build" olddefconfig \
             LOCALVERSION="${LOCALVERSION}" \
             KBUILD_BUILD_USER="${KBUILD_BUILD_USER}" \
             KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST}"
-
-      # ── Patches ─────────────────────────────────────────────────────────────
-
-      - name: Apply patches
-        # BUG FIX: Patches are applied to the SOURCE tree, not the build dir.
-        run: |
-          shopt -s nullglob
-          PATCHES=(patches/*.patch)
-          if [ ${#PATCHES[@]} -gt 0 ]; then
-            cd .cache-src/linux-${FULL_VERSION}
-            for p in "${PATCHES[@]}"; do
-              echo "Applying: $p"
-              git apply "../../$p" || patch -p1 < "../../$p"
-            done
-          else
-            echo "No patches to apply."
-          fi
-
-      # ── Build ────────────────────────────────────────────────────────────────
 
       - name: Build kernel
         run: |
           BUILD_START=$(date +%s)
-
-          {
-            echo " ██╗  ██╗██╗   ██╗██████╗ ███████╗██████╗ ██╗ ██████╗ ███╗   ██╗"
-            echo " ██║  ██║╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗██║██╔═══██╗████╗  ██║"
-            echo " ███████║ ╚████╔╝ ██████╔╝█████╗  ██████╔╝██║██║   ██║██╔██╗ ██║"
-            echo " ██╔══██║  ╚██╔╝  ██╔═══╝ ██╔══╝  ██╔══██╗██║██║   ██║██║╚██╗██║"
-            echo " ██║  ██║   ██║   ██║     ███████╗██║  ██║██║╚██████╔╝██║ ╚████║"
-            echo " ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝"
-            echo " Hyperion Build Log | Hyperion ${HYPERION_VER} | Linux ${FULL_VERSION}"
-            echo " Build started: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-            echo ""
-
-            # ── SPEED TWEAK 7 ──────────────────────────────────────────────
-            # CC="ccache gcc": pass ccache as a direct wrapper.
-            # KCFLAGS="-pipe": use pipes between GCC stages, no temp files.
-            # O=: direct all output to the tmpfs build directory.
-            make -j$(nproc) \
-              -C .cache-src/linux-${FULL_VERSION} \
-              O="$(pwd)/.cache-build/linux-${FULL_VERSION}" \
-              CC="ccache gcc" \
-              KCFLAGS="-pipe" \
-              LOCALVERSION="${LOCALVERSION}" \
-              KBUILD_BUILD_USER="${KBUILD_BUILD_USER}" \
-              KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST}"
-
-            BUILD_END=$(date +%s)
-            BUILD_ELAPSED=$(( BUILD_END - BUILD_START ))
-            echo ""
-            echo " Build completed in $(( BUILD_ELAPSED / 60 ))m $(( BUILD_ELAPSED % 60 ))s"
-            echo "${BUILD_ELAPSED}" > .build_seconds
-          } 2>&1 | tee .cache-build/linux-${FULL_VERSION}/build.log
-
-      - name: Print ccache stats
-        run: |
-          ccache --show-stats
-          HIT_RATE=$(ccache --show-stats | grep -oP 'Hits:\s+\K[0-9.]+(?=%)' | head -1 || echo 0)
-          echo "Cache hit rate: ${HIT_RATE}%"
-          if (( $(echo "$HIT_RATE < 50" | bc -l 2>/dev/null || echo 1) )); then
-            echo "::warning::Low ccache hit rate (${HIT_RATE}%). Check KBUILD_BUILD_TIMESTAMP is not dynamic."
-          fi
-
-      # ── SPEED TWEAK 8 ──────────────────────────────────────────────────────
-      # Persist build objects from tmpfs back to disk BEFORE packaging.
-      # This ensures the build cache action has something to save.
-      # Without this step the tmpfs contents vanish at job end.
-      - name: Persist build objects from tmpfs to disk
-        run: |
-          mkdir -p .cache-build-persistent/linux-${FULL_VERSION}
-          rsync -a --delete \
-            .cache-build/linux-${FULL_VERSION}/ \
-            .cache-build-persistent/linux-${FULL_VERSION}/
-
-      # ── .deb packages ────────────────────────────────────────────────────────
-
-      - name: Build installable .deb packages
-        # BUG FIX: bindeb-pkg must also use O= so it finds already-built
-        # objects in the tmpfs build dir (fast, no recompile).
-        run: |
-          make -j$(nproc) \
-            -C .cache-src/linux-${FULL_VERSION} \
-            O="$(pwd)/.cache-build/linux-${FULL_VERSION}" \
-            bindeb-pkg \
+          make -j$(nproc) -C "build-src/linux-${FULL_VERSION}" O="$(pwd)/build" \
             CC="ccache gcc" \
+            KCFLAGS="-pipe" \
             LOCALVERSION="${LOCALVERSION}" \
             KBUILD_BUILD_USER="${KBUILD_BUILD_USER}" \
             KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST}"
+          BUILD_END=$(date +%s)
+          echo $((BUILD_END - BUILD_START)) > .build_seconds
 
-          # bindeb-pkg outputs .deb files one level above the build output dir
-          # i.e. into .cache-build/ — rename them to Hyperion-prefixed names
-          for deb in .cache-build/linux-image-*.deb \
-                     .cache-build/linux-headers-*.deb \
-                     .cache-build/linux-libc-dev*.deb; do
-            [ -f "$deb" ] || continue
-            base=$(basename "$deb")
-            case "$base" in
-              linux-image-*)   mv "$deb" "Hyperion-linux-image-${FULL_VERSION}.deb" ;;
-              linux-headers-*) mv "$deb" "Hyperion-linux-headers-${FULL_VERSION}.deb" ;;
-              linux-libc-dev*) mv "$deb" "Hyperion-linux-libc-dev-${FULL_VERSION}.deb" ;;
-            esac
-          done
+      - name: Print ccache stats
+        run: ccache --show-stats
 
-      # ── Modules + headers staging (tar.zst path) ─────────────────────────────
-
-      - name: Install modules and headers into staging
+      - name: Install modules to staging
         run: |
           mkdir -p staging
-
-          # INSTALL_MOD_STRIP=1 strips debug symbols → ~150 MB instead of ~1 GB
-          make \
-            -C .cache-src/linux-${FULL_VERSION} \
-            O="$(pwd)/.cache-build/linux-${FULL_VERSION}" \
-            modules_install \
+          make -C "build-src/linux-${FULL_VERSION}" O="$(pwd)/build" modules_install \
             INSTALL_MOD_PATH="$(pwd)/staging" \
             INSTALL_MOD_STRIP=1 \
             LOCALVERSION="${LOCALVERSION}"
-
-          make \
-            -C .cache-src/linux-${FULL_VERSION} \
-            O="$(pwd)/.cache-build/linux-${FULL_VERSION}" \
-            headers_install \
+          make -C "build-src/linux-${FULL_VERSION}" O="$(pwd)/build" headers_install \
             INSTALL_HDR_PATH="$(pwd)/staging/usr" \
             LOCALVERSION="${LOCALVERSION}"
 
-      # ── Package tarballs ─────────────────────────────────────────────────────
-
-      - name: Package artifacts into .tar.zst files
+      - name: Package artifacts
         run: |
-          BUILD_DIR=".cache-build/linux-${FULL_VERSION}"
-
-          # Copy config into build dir for inclusion in tarball
-          cp hyperion.config "${BUILD_DIR}/hyperion.config"
-
-          # Strip vmlinux before including — unstripped ~500 MB, stripped ~10 MB.
-          strip --strip-debug "${BUILD_DIR}/vmlinux" -o "${BUILD_DIR}/vmlinux.stripped"
-
-          # 1. Core kernel image + metadata
-          tar --zstd -cf Hyperion-Kernel-${FULL_VERSION}.tar.zst \
-            -C "${BUILD_DIR}" \
+          cp hyperion.config build/hyperion.config
+          strip --strip-debug build/vmlinux -o build/vmlinux.stripped
+          tar --zstd -cf "Hyperion-Kernel-${FULL_VERSION}.tar.zst" \
+            -C build \
             arch/x86/boot/bzImage \
             vmlinux.stripped \
             System.map \
-            Module.symvers \
             build.log \
             hyperion.config
-
-          # 2. Stripped kernel modules (.ko) — extract to /lib/modules/ on target
-          tar --zstd -cf Hyperion-Modules-${FULL_VERSION}.tar.zst \
-            -C staging/lib/modules .
-
-          # 3. Userspace kernel headers — extract to /usr/include/ on target
-          tar --zstd -cf Hyperion-Headers-${FULL_VERSION}.tar.zst \
-            -C staging/usr/include .
-
-      # ── Checksums ────────────────────────────────────────────────────────────
+          tar --zstd -cf "Hyperion-Modules-${FULL_VERSION}.tar.zst" -C staging/lib/modules .
+          tar --zstd -cf "Hyperion-Headers-${FULL_VERSION}.tar.zst" -C staging/usr/include .
 
       - name: Generate checksums
         run: |
           sha256sum \
-            Hyperion-Kernel-${FULL_VERSION}.tar.zst \
-            Hyperion-Modules-${FULL_VERSION}.tar.zst \
-            Hyperion-Headers-${FULL_VERSION}.tar.zst \
-            Hyperion-linux-image-${FULL_VERSION}.deb \
-            Hyperion-linux-headers-${FULL_VERSION}.deb \
-            Hyperion-linux-libc-dev-${FULL_VERSION}.deb \
-            > Hyperion-${FULL_VERSION}.sha256
-
-      # ── Step summary ─────────────────────────────────────────────────────────
+            "Hyperion-Kernel-${FULL_VERSION}.tar.zst" \
+            "Hyperion-Modules-${FULL_VERSION}.tar.zst" \
+            "Hyperion-Headers-${FULL_VERSION}.tar.zst" \
+            > "Hyperion-${FULL_VERSION}.sha256"
 
       - name: Write build summary
         run: |
-          BUILD_SECS=$(cat .build_seconds 2>/dev/null || echo 0)
-          BUILD_MIN=$(( BUILD_SECS / 60 ))
-          BUILD_SEC=$(( BUILD_SECS % 60 ))
-          BZIMAGE_SIZE=$(du -sh .cache-build/linux-${FULL_VERSION}/arch/x86/boot/bzImage | cut -f1)
-          KERNEL_TAR_SIZE=$(du -sh Hyperion-Kernel-${FULL_VERSION}.tar.zst | cut -f1)
-          MODULES_TAR_SIZE=$(du -sh Hyperion-Modules-${FULL_VERSION}.tar.zst | cut -f1)
-          IMAGE_DEB_SIZE=$(du -sh Hyperion-linux-image-${FULL_VERSION}.deb | cut -f1)
-          CCACHE_HITS=$(ccache --show-stats | grep -oP 'Hits:\s+\K[0-9.]+(?=%)' | head -1 || echo '?')
-
-          cat >> $GITHUB_STEP_SUMMARY << SUMMARY
+          BUILD_SEC=$(cat .build_seconds || echo 0)
+          BUILD_MIN=$((BUILD_SEC / 60))
+          BUILD_SEC=$((BUILD_SEC % 60))
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Hyperion ${HYPERION_VER} - Build Summary
 
-          | Field          | Value |
-          |----------------|-------|
-          | Kernel         | Linux ${FULL_VERSION} |
-          | Hyperion ver   | ${HYPERION_VER} |
-          | Release tag    | ${TAG_NAME} |
-          | Build time     | ${BUILD_MIN}m ${BUILD_SEC}s |
-          | CPUs used      | $(nproc) |
-          | bzImage size   | ${BZIMAGE_SIZE} |
-          | ccache hit rate | ${CCACHE_HITS}% |
+          | Field            | Value                                                              |
+          |------------------|--------------------------------------------------------------------|
+          | Kernel           | Linux ${FULL_VERSION}                                              |
+          | Hyperion ver     | ${HYPERION_VER}                                                    |
+          | Release tag      | ${TAG_NAME}                                                        |
+          | Build time       | ${BUILD_MIN}m ${BUILD_SEC}s                                        |
+          | CPUs used        | $(nproc)                                                           |
+          | bzImage size     | $(du -sh build/arch/x86/boot/bzImage | cut -f1)                    |
+          | Kernel tar size  | $(du -sh "Hyperion-Kernel-${FULL_VERSION}.tar.zst" | cut -f1)      |
+          | Modules tar size | $(du -sh "Hyperion-Modules-${FULL_VERSION}.tar.zst" | cut -f1)     |
+          | ccache hit rate  | $(ccache --show-stats | grep -oP 'Hits:\s+\K[0-9.]+' | head -1)%  |
+          EOF
 
-          ## Speed optimizations active
-          | Tweak | Effect |
-          |-------|--------|
-          | KBUILD_BUILD_TIMESTAMP='' | Enables ccache hits (was 0% without this) |
-          | tmpfs build dir (4 GB) | All .o writes go to RAM, not SSD |
-          | CC="ccache gcc" | Compiler output cached across runs |
-          | KCFLAGS="-pipe" | GCC uses pipes not temp files between stages |
-          | ccache sloppiness tuning | Higher hit rate across runner environments |
-          | apt + tarball + object caching | Skips re-download and re-extract |
-
-          ## Artifacts
-          | File | Size | Use for |
-          |------|------|---------|
-          | Hyperion-Kernel-${FULL_VERSION}.tar.zst | ${KERNEL_TAR_SIZE} | bzImage + stripped vmlinux + System.map |
-          | Hyperion-Modules-${FULL_VERSION}.tar.zst | ${MODULES_TAR_SIZE} | Stripped .ko modules -> /lib/modules/ |
-          | Hyperion-linux-image-${FULL_VERSION}.deb | ${IMAGE_DEB_SIZE} | Debian/Ubuntu: dpkg -i directly into rootfs |
-          | Hyperion-linux-headers-${FULL_VERSION}.deb | - | Debian/Ubuntu: DKMS + external modules |
-          | Hyperion-linux-libc-dev-${FULL_VERSION}.deb | - | Debian/Ubuntu: userspace ABI headers |
-          SUMMARY
-
-      # ── Release ───────────────────────────────────────────────────────────────
-
-      - name: Create GitHub Release and upload artifacts
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG_NAME }}
           name: Hyperion ${{ env.HYPERION_VER }} based on Linux ${{ env.FULL_VERSION }}
-          body: |
-            ## Hyperion ${{ env.HYPERION_VER }} — Linux ${{ env.FULL_VERSION }}
-
-            ### Quick install (Debian/Ubuntu-based distro)
-            ```bash
-            dpkg -i Hyperion-linux-image-${{ env.FULL_VERSION }}.deb
-            dpkg -i Hyperion-linux-headers-${{ env.FULL_VERSION }}.deb
-            update-grub
-            ```
-
-            ### Manual install (any distro)
-            ```bash
-            tar --zstd -xf Hyperion-Kernel-${{ env.FULL_VERSION }}.tar.zst  -C /boot/
-            tar --zstd -xf Hyperion-Modules-${{ env.FULL_VERSION }}.tar.zst -C /lib/modules/
-            depmod -a ${{ env.FULL_VERSION }}${{ env.LOCALVERSION }}
-            dracut --kver ${{ env.FULL_VERSION }}${{ env.LOCALVERSION }} /boot/initramfs-hyperion.img
-            ```
-
-            ### Artifacts
-            | File | Contents |
-            |------|----------|
-            | `Hyperion-Kernel-*.tar.zst` | `bzImage`, stripped `vmlinux`, `System.map`, config, build log |
-            | `Hyperion-Modules-*.tar.zst` | All stripped `.ko` modules → `/lib/modules/` |
-            | `Hyperion-Headers-*.tar.zst` | Kernel headers → `/usr/include/` |
-            | `Hyperion-linux-image-*.deb` | Debian package: kernel image + modules |
-            | `Hyperion-linux-headers-*.deb` | Debian package: kernel headers (DKMS) |
-            | `Hyperion-linux-libc-dev-*.deb` | Debian package: userspace ABI headers |
-            | `Hyperion-*.sha256` | SHA-256 checksums for all files |
           files: |
             Hyperion-Kernel-${{ env.FULL_VERSION }}.tar.zst
             Hyperion-Modules-${{ env.FULL_VERSION }}.tar.zst
             Hyperion-Headers-${{ env.FULL_VERSION }}.tar.zst
-            Hyperion-linux-image-${{ env.FULL_VERSION }}.deb
-            Hyperion-linux-headers-${{ env.FULL_VERSION }}.deb
-            Hyperion-linux-libc-dev-${{ env.FULL_VERSION }}.deb
             Hyperion-${{ env.FULL_VERSION }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
