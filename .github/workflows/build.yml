@@ -147,8 +147,11 @@ jobs:
                 -O "build-src/linux-${FULL_VERSION}.tar.xz"
             fi
             tar -xf "build-src/linux-${FULL_VERSION}.tar.xz" -C build-src
-            EXTRACTED_DIR=$(find build-src -maxdepth 1 -mindepth 1 -type d | head -1)
-            mv "$EXTRACTED_DIR" "build-src/linux-${FULL_VERSION}"
+            # Only move if extracted directory name differs from expected
+            EXTRACTED_DIR=$(find build-src -maxdepth 1 -mindepth 1 -type d -not -name "linux-${FULL_VERSION}" | head -1)
+            if [ -n "$EXTRACTED_DIR" ]; then
+              mv "$EXTRACTED_DIR" "build-src/linux-${FULL_VERSION}"
+            fi
           fi
 
       - name: Apply patches if any
