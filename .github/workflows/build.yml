@@ -14,7 +14,6 @@ jobs:
 
   validate-config:
     runs-on: ubuntu-latest
-
     outputs:
       VERSION: ${{ steps.parse.outputs.VERSION }}
       FULL_VERSION: ${{ steps.parse.outputs.FULL_VERSION }}
@@ -30,10 +29,8 @@ jobs:
         id: parse
         run: |
           set -euo pipefail
-
           python3 << 'EOF'
           import os, hashlib, glob
-
           config={}
           with open("hyperion.config") as f:
               for line in f:
@@ -41,46 +38,24 @@ jobs:
                   if not line or line.startswith("#"): continue
                   k,v=line.split("=",1)
                   config[k.strip()]=v.strip().strip('"')
-
           VERSION=int(config.get("CONFIG_VERSION",0))
           PATCH=int(config.get("CONFIG_PATCHLEVEL",0))
           SUB=int(config.get("CONFIG_SUBLEVEL",0))
-
           FULL_VERSION=f"{VERSION}.{PATCH}" if SUB==0 else f"{VERSION}.{PATCH}.{SUB}"
-
           LOCAL=config.get("CONFIG_LOCALVERSION","")
-
           HYPERION_VER=LOCAL.split("-Hyperion-",1)[-1] if "-Hyperion-" in LOCAL else LOCAL.lstrip("-")
-
           TAG=HYPERION_VER
-
           CONFIG_HASH=hashlib.sha256(open("hyperion.config","rb").read()).hexdigest()[:12]
-
           patches=sorted(glob.glob("patches/*.patch"))
-          if patches:
-              data=b''.join(open(p,"rb").read() for p in patches)
-              PATCHES_HASH=hashlib.sha256(data).hexdigest()[:12]
-          else:
-              PATCHES_HASH="none"
-
+          PATCHES_HASH=hashlib.sha256(b''.join(open(p,"rb").read() for p in patches)).hexdigest()[:12] if patches else "none"
           out=os.environ["GITHUB_OUTPUT"]
-
-          for k,v in {
-            "VERSION":VERSION,
-            "FULL_VERSION":FULL_VERSION,
-            "TAG":TAG,
-            "HYPERION_VER":HYPERION_VER,
-            "CONFIG_HASH":CONFIG_HASH,
-            "PATCHES_HASH":PATCHES_HASH
-          }.items():
-            open(out,"a").write(f"{k}={v}\n")
+          for k,v in {"VERSION":VERSION,"FULL_VERSION":FULL_VERSION,"TAG":TAG,"HYPERION_VER":HYPERION_VER,"CONFIG_HASH":CONFIG_HASH,"PATCHES_HASH":PATCHES_HASH}.items():
+              open(out,"a").write(f"{k}={v}\n")
           EOF
-
 
   build-kernel:
     needs: validate-config
     runs-on: ubuntu-latest
-
     env:
       KERNEL_VERSION: ${{ needs.validate-config.outputs.VERSION }}
       FULL_VERSION: ${{ needs.validate-config.outputs.FULL_VERSION }}
@@ -88,10 +63,8 @@ jobs:
       HYPERION_VER: ${{ needs.validate-config.outputs.HYPERION_VER }}
       CONFIG_HASH: ${{ needs.validate-config.outputs.CONFIG_HASH }}
       PATCHES_HASH: ${{ needs.validate-config.outputs.PATCHES_HASH }}
-
       KBUILD_BUILD_USER: Soumalya
       KBUILD_BUILD_HOST: github-runner
-
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 5G
       CCACHE_COMPRESS: true
@@ -102,7 +75,6 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # deterministic timestamp
       - name: Generate reproducible timestamp
         run: |
           SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
@@ -119,8 +91,8 @@ jobs:
             dwarves rsync cpio git wget curl \
             ccache zstd ca-certificates
 
-      # ccache layer
       - name: Restore compiler cache
+        id: cache-ccache
         uses: actions/cache@v4
         with:
           path: .ccache
@@ -128,39 +100,50 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
             ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-
-            ccache-
+            ccache-${{ runner.os }}-
 
-      # kernel tarball cache
-      - name: Restore kernel source
-        id: kernel
+      - name: Restore kernel source tarball
+        id: kernel-src
         uses: actions/cache@v4
         with:
           path: linux-${{ env.FULL_VERSION }}.tar.xz
           key: kernel-src-${{ env.FULL_VERSION }}
 
-      - name: Download kernel
-        if: steps.kernel.outputs.cache-hit != 'true'
+      - name: Download kernel tarball
+        if: steps.kernel-src.outputs.cache-hit != 'true'
         run: |
           wget https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/linux-${FULL_VERSION}.tar.xz
           wget https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/sha256sums.asc
           grep "linux-${FULL_VERSION}.tar.xz" sha256sums.asc | sha256sum -c -
 
-      # kernel object tree cache
-      - name: Restore kernel build cache
-        id: kernel-build
+      - name: Restore object cache
+        id: cache-obj
         uses: actions/cache@v4
         with:
           path: kernel
-          key: kernel-build-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
+          key: kernel-obj-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
           restore-keys: |
-            kernel-build-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
-            kernel-build-${{ env.FULL_VERSION }}-
+            kernel-obj-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
+            kernel-obj-${{ env.FULL_VERSION }}-
+
+      - name: Restore module object cache
+        id: cache-mod
+        uses: actions/cache@v4
+        with:
+          path: |
+            kernel/.modlib
+            kernel/.tmp_mod
+          key: kernel-mod-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
+          restore-keys: |
+            kernel-mod-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
+            kernel-mod-${{ env.FULL_VERSION }}-
 
       - name: Extract kernel
-        if: steps.kernel-build.outputs.cache-hit != 'true'
+        if: steps.cache-obj.outputs.cache-hit != 'true'
         run: |
-          tar -xf linux-${FULL_VERSION}.tar.xz
-          mv linux-${FULL_VERSION} kernel
+          rm -rf kernel
+          mkdir kernel
+          tar -xf linux-${FULL_VERSION}.tar.xz -C kernel --strip-components=1
 
       - name: Apply config
         working-directory: kernel
@@ -193,12 +176,10 @@ jobs:
       - name: Package artifacts
         run: |
           mkdir artifacts
-
           cp kernel/arch/x86/boot/bzImage artifacts/
           cp kernel/System.map artifacts/ || true
           cp kernel/vmlinux artifacts/ || true
           cp hyperion.config artifacts/
-
           tar --zstd -cf Hyperion-Kernel-${FULL_VERSION}.tar.zst artifacts
 
       - name: Generate checksum
