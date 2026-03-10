@@ -30,8 +30,10 @@ jobs:
       - name: Parse hyperion.config
         id: parse-config
         run: |
-          python3 - << 'EOF'
+          python3 <<'EOF'
           import sys
+          import os
+
           config = {}
           with open('hyperion.config') as f:
               for line in f:
@@ -44,36 +46,40 @@ jobs:
                   k, v = line.split('=', 1)
                   config[k.strip()] = v.strip().strip('"')
 
-          def parse_int(k, d=0):
+          def parse_int(k, default=0):
               v = config.get(k, '')
-              if v == '':
-                  return d
+              if not v:
+                  return default
               try:
                   return int(v)
-              except Exception:
+              except ValueError:
                   print(f"Invalid {k}: {v}")
                   sys.exit(1)
 
           VERSION      = parse_int('CONFIG_VERSION')
           PATCH        = parse_int('CONFIG_PATCHLEVEL')
           SUB          = parse_int('CONFIG_SUBLEVEL')
-          EXTRA        = config.get('CONFIG_EXTRAVERSION', '') or ''
-          LOCAL        = config.get('CONFIG_LOCALVERSION', '') or ''
+          EXTRA        = config.get('CONFIG_EXTRAVERSION', '')
+          LOCAL        = config.get('CONFIG_LOCALVERSION', '')
           FULL_VERSION = f"{VERSION}.{PATCH}" if SUB == 0 else f"{VERSION}.{PATCH}.{SUB}"
           HYPERION_VER = LOCAL.split('-Hyperion-', 1)[-1] if '-Hyperion-' in LOCAL else LOCAL.lstrip('-')
           TAG          = HYPERION_VER
 
-          for k, v in [
-              ('VERSION',      VERSION),
-              ('PATCH',        PATCH),
-              ('SUB',          SUB),
-              ('EXTRA',        EXTRA),
-              ('LOCAL',        LOCAL),
-              ('TAG',          TAG),
-              ('HYPERION_VER', HYPERION_VER),
-              ('FULL_VERSION', FULL_VERSION),
-          ]:
-              print(f"::set-output name={k}::{v}")
+          outputs = {
+              "VERSION": VERSION,
+              "PATCH": PATCH,
+              "SUB": SUB,
+              "EXTRA": EXTRA,
+              "LOCAL": LOCAL,
+              "TAG": TAG,
+              "HYPERION_VER": HYPERION_VER,
+              "FULL_VERSION": FULL_VERSION,
+          }
+
+          github_output = os.environ.get('GITHUB_OUTPUT', '/dev/stdout')
+          with open(github_output, 'a') as f:
+              for k, v in outputs.items():
+                  f.write(f"{k}={v}\n")
           EOF
 
   build-kernel:
@@ -242,4 +248,3 @@ jobs:
             Hyperion-${{ env.FULL_VERSION }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
