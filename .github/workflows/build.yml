@@ -3,25 +3,23 @@ name: Hyperion Kernel Build CI
 on:
   workflow_dispatch:
 
+concurrency:
+  group: hyperion-kernel
+  cancel-in-progress: false
+
 permissions:
   contents: write
-  actions: write
 
 jobs:
 
   validate-config:
-    name: Validate Hyperion Config
     runs-on: ubuntu-latest
 
     outputs:
       VERSION: ${{ steps.parse.outputs.VERSION }}
-      PATCH: ${{ steps.parse.outputs.PATCH }}
-      SUB: ${{ steps.parse.outputs.SUB }}
-      EXTRA: ${{ steps.parse.outputs.EXTRA }}
-      LOCAL: ${{ steps.parse.outputs.LOCAL }}
+      FULL_VERSION: ${{ steps.parse.outputs.FULL_VERSION }}
       TAG: ${{ steps.parse.outputs.TAG }}
       HYPERION_VER: ${{ steps.parse.outputs.HYPERION_VER }}
-      FULL_VERSION: ${{ steps.parse.outputs.FULL_VERSION }}
       CONFIG_HASH: ${{ steps.parse.outputs.CONFIG_HASH }}
       PATCHES_HASH: ${{ steps.parse.outputs.PATCHES_HASH }}
 
@@ -31,11 +29,12 @@ jobs:
       - name: Parse hyperion.config
         id: parse
         run: |
+          set -euo pipefail
+
           python3 << 'EOF'
-          import sys, os, hashlib, glob
+          import os, hashlib, glob
 
-          config = {}
-
+          config={}
           with open("hyperion.config") as f:
               for line in f:
                   line=line.strip()
@@ -43,23 +42,16 @@ jobs:
                   k,v=line.split("=",1)
                   config[k.strip()]=v.strip().strip('"')
 
-          def parse_int(k):
-              try:
-                  return int(config.get(k,0))
-              except:
-                  print("Invalid value:",k)
-                  sys.exit(1)
-
-          VERSION=parse_int("CONFIG_VERSION")
-          PATCH=parse_int("CONFIG_PATCHLEVEL")
-          SUB=parse_int("CONFIG_SUBLEVEL")
-
-          EXTRA=config.get("CONFIG_EXTRAVERSION","")
-          LOCAL=config.get("CONFIG_LOCALVERSION","")
+          VERSION=int(config.get("CONFIG_VERSION",0))
+          PATCH=int(config.get("CONFIG_PATCHLEVEL",0))
+          SUB=int(config.get("CONFIG_SUBLEVEL",0))
 
           FULL_VERSION=f"{VERSION}.{PATCH}" if SUB==0 else f"{VERSION}.{PATCH}.{SUB}"
 
+          LOCAL=config.get("CONFIG_LOCALVERSION","")
+
           HYPERION_VER=LOCAL.split("-Hyperion-",1)[-1] if "-Hyperion-" in LOCAL else LOCAL.lstrip("-")
+
           TAG=HYPERION_VER
 
           CONFIG_HASH=hashlib.sha256(open("hyperion.config","rb").read()).hexdigest()[:12]
@@ -73,37 +65,32 @@ jobs:
 
           out=os.environ["GITHUB_OUTPUT"]
 
-          with open(out,"a") as f:
-              f.write(f"VERSION={VERSION}\n")
-              f.write(f"PATCH={PATCH}\n")
-              f.write(f"SUB={SUB}\n")
-              f.write(f"EXTRA={EXTRA}\n")
-              f.write(f"LOCAL={LOCAL}\n")
-              f.write(f"TAG={TAG}\n")
-              f.write(f"HYPERION_VER={HYPERION_VER}\n")
-              f.write(f"FULL_VERSION={FULL_VERSION}\n")
-              f.write(f"CONFIG_HASH={CONFIG_HASH}\n")
-              f.write(f"PATCHES_HASH={PATCHES_HASH}\n")
+          for k,v in {
+            "VERSION":VERSION,
+            "FULL_VERSION":FULL_VERSION,
+            "TAG":TAG,
+            "HYPERION_VER":HYPERION_VER,
+            "CONFIG_HASH":CONFIG_HASH,
+            "PATCHES_HASH":PATCHES_HASH
+          }.items():
+            open(out,"a").write(f"{k}={v}\n")
           EOF
 
+
   build-kernel:
-    name: Build Linux Hyperion Kernel
     needs: validate-config
     runs-on: ubuntu-latest
 
     env:
-      KERNEL_VERSION:  ${{ needs.validate-config.outputs.VERSION }}
-      FULL_VERSION:    ${{ needs.validate-config.outputs.FULL_VERSION }}
-      CONFIG_HASH:     ${{ needs.validate-config.outputs.CONFIG_HASH }}
-      PATCHES_HASH:    ${{ needs.validate-config.outputs.PATCHES_HASH }}
-      TAG_NAME:        ${{ needs.validate-config.outputs.TAG }}
-      HYPERION_VER:    ${{ needs.validate-config.outputs.HYPERION_VER }}
+      KERNEL_VERSION: ${{ needs.validate-config.outputs.VERSION }}
+      FULL_VERSION: ${{ needs.validate-config.outputs.FULL_VERSION }}
+      TAG_NAME: ${{ needs.validate-config.outputs.TAG }}
+      HYPERION_VER: ${{ needs.validate-config.outputs.HYPERION_VER }}
+      CONFIG_HASH: ${{ needs.validate-config.outputs.CONFIG_HASH }}
+      PATCHES_HASH: ${{ needs.validate-config.outputs.PATCHES_HASH }}
 
       KBUILD_BUILD_USER: Soumalya
-      KBUILD_BUILD_HOST: hyperion-ci
-      KBUILD_BUILD_TIMESTAMP: "2024-01-01 00:00:00 UTC"
-      KBUILD_BUILD_VERSION: 1
-      SOURCE_DATE_EPOCH: 1704067200
+      KBUILD_BUILD_HOST: github-runner
 
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 5G
@@ -115,36 +102,62 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # deterministic timestamp
+      - name: Generate reproducible timestamp
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_TIMESTAMP=$(date -u -d "@$SOURCE_DATE_EPOCH")" >> $GITHUB_ENV
+          echo "KBUILD_BUILD_VERSION=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex \
             libssl-dev libelf-dev libncurses-dev \
             dwarves rsync cpio git wget curl \
-            ccache zstd
+            ccache zstd ca-certificates
 
-      - name: Restore ccache
+      # ccache layer
+      - name: Restore compiler cache
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: ccache-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}
+          key: ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
+            ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-
+            ccache-
 
-      - name: Restore kernel tarball
+      # kernel tarball cache
+      - name: Restore kernel source
+        id: kernel
         uses: actions/cache@v4
-        id: kernel-tar
         with:
           path: linux-${{ env.FULL_VERSION }}.tar.xz
-          key: kernel-${{ env.FULL_VERSION }}
+          key: kernel-src-${{ env.FULL_VERSION }}
 
       - name: Download kernel
-        if: steps.kernel-tar.outputs.cache-hit != 'true'
+        if: steps.kernel.outputs.cache-hit != 'true'
         run: |
           wget https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/linux-${FULL_VERSION}.tar.xz
           wget https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/sha256sums.asc
           grep "linux-${FULL_VERSION}.tar.xz" sha256sums.asc | sha256sum -c -
 
+      # kernel object tree cache
+      - name: Restore kernel build cache
+        id: kernel-build
+        uses: actions/cache@v4
+        with:
+          path: kernel
+          key: kernel-build-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
+          restore-keys: |
+            kernel-build-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
+            kernel-build-${{ env.FULL_VERSION }}-
+
       - name: Extract kernel
+        if: steps.kernel-build.outputs.cache-hit != 'true'
         run: |
           tar -xf linux-${FULL_VERSION}.tar.xz
           mv linux-${FULL_VERSION} kernel
@@ -164,19 +177,15 @@ jobs:
       - name: Apply patches
         working-directory: kernel
         run: |
-          set -e
           shopt -s nullglob
           for patch in ../patches/*.patch; do
-            echo "Applying $patch"
             patch -p1 < "$patch"
           done
 
       - name: Build kernel
         working-directory: kernel
         run: |
-          set -euo pipefail
-
-          make -j$(nproc --all) \
+          make -j$(nproc) \
             CC="ccache gcc" \
             LOCALVERSION="-Hyperion-${HYPERION_VER}" \
             bzImage modules
@@ -192,7 +201,7 @@ jobs:
 
           tar --zstd -cf Hyperion-Kernel-${FULL_VERSION}.tar.zst artifacts
 
-      - name: Checksums
+      - name: Generate checksum
         run: |
           sha256sum Hyperion-Kernel-${FULL_VERSION}.tar.zst > Hyperion-Kernel-${FULL_VERSION}.sha256
 
