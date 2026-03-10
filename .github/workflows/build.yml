@@ -3,12 +3,6 @@ name: Hyperion Kernel Build CI
 on:
   workflow_dispatch:
 
-env:
-  KERNEL_VERSION: "6.19.6"
-  HYPERION_VERSION: "0.1.0"
-  KBUILD_BUILD_USER: "Soumalya Das"
-  KBUILD_BUILD_HOST: "hyperion-ci"
-
 permissions:
   contents: write
   actions: write
@@ -17,23 +11,67 @@ jobs:
   validate-config:
     name: Validate Hyperion Config
     runs-on: ubuntu-latest
+    outputs:
+      VERSION: ${{ steps.parse-config.outputs.VERSION }}
+      PATCH: ${{ steps.parse-config.outputs.PATCH }}
+      SUB: ${{ steps.parse-config.outputs.SUB }}
+      EXTRA: ${{ steps.parse-config.outputs.EXTRA }}
+      LOCAL: ${{ steps.parse-config.outputs.LOCAL }}
+      TAG: ${{ steps.parse-config.outputs.TAG }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate hyperion.config
+      - name: Validate and parse hyperion.config
+        id: parse-config
         run: |
           python3 - << 'EOF'
-          with open('hyperion.config') as f: lines = f.readlines()
-          errs=[]
-          for i,l in enumerate(lines,1):
-              l=l.strip()
-              if not l or l.startswith('#'): continue
-              if '=' not in l: errs.append(f"Line {i}: No '=': {l}")
-              elif not l.startswith("CONFIG_"): errs.append(f"Line {i}: needs CONFIG_: {l}")
-          if errs:
-              print("\n".join(errs))
-              exit(1)
-          print("Config OK")
+          import re
+          import sys
+
+          config = {}
+          with open('hyperion.config') as f:
+              for line in f:
+                  line=line.strip()
+                  if not line or line.startswith('#'):
+                      continue
+                  if '=' not in line:
+                      print(f"Invalid line: {line}")
+                      sys.exit(1)
+                  key, val = line.split('=', 1)
+                  config[key.strip()] = val.strip().strip('"')
+
+          if 'CONFIG_VERSION' not in config or config['CONFIG_VERSION']=='':
+              print("Missing mandatory CONFIG_VERSION")
+              sys.exit(1)
+
+          def parse_int(key, default=0):
+              val = config.get(key, '')
+              if val=='':
+                  return default
+              try:
+                  iv = int(val)
+                  if iv < 0:
+                      raise ValueError
+                  return iv
+              except ValueError:
+                  print(f"Invalid {key} value: {val} (must be non-negative integer)")
+                  sys.exit(1)
+
+          VERSION = parse_int('CONFIG_VERSION')
+          PATCH = parse_int('CONFIG_PATCHLEVEL')
+          SUB = parse_int('CONFIG_SUBLEVEL')
+          EXTRA = config.get('CONFIG_EXTRAVERSION','') or ''
+          LOCAL = config.get('CONFIG_LOCALVERSION','') or ''
+
+          tag_suffix = LOCAL.split('-Hyperion-')[-1] if '-Hyperion-' in LOCAL else LOCAL
+          TAG = f"v{VERSION}.{PATCH}.{SUB}{tag_suffix}"
+
+          print(f"::set-output name=VERSION::{VERSION}")
+          print(f"::set-output name=PATCH::{PATCH}")
+          print(f"::set-output name=SUB::{SUB}")
+          print(f"::set-output name=EXTRA::{EXTRA}")
+          print(f"::set-output name=LOCAL::{LOCAL}")
+          print(f"::set-output name=TAG::{TAG}")
           EOF
 
   build-kernel:
@@ -41,8 +79,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: validate-config
     env:
-      KERNEL_VERSION: 6.19.6
-      HYPERION_VERSION: 0.1.0
+      KERNEL_VERSION: ${{ needs.validate-config.outputs.VERSION }}
+      PATCHLEVEL: ${{ needs.validate-config.outputs.PATCH }}
+      SUBLEVEL: ${{ needs.validate-config.outputs.SUB }}
+      EXTRAVERSION: ${{ needs.validate-config.outputs.EXTRA }}
+      LOCALVERSION: ${{ needs.validate-config.outputs.LOCAL }}
+      TAG_NAME: ${{ needs.validate-config.outputs.TAG }}
       KBUILD_BUILD_USER: Soumalya Das
       KBUILD_BUILD_HOST: hyperion-ci
 
@@ -69,27 +111,32 @@ jobs:
         if: steps.cache-tar.outputs.cache-hit != 'true'
         run: wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.KERNEL_VERSION }}.tar.xz
 
-      - name: Prepare build tree
+      - name: Prepare build tree safely
         run: |
           mkdir -p .cache-build
-          if [ ! -d ".cache-build/linux-${KERNEL_VERSION}" ]; then
-            tar -xf linux-${KERNEL_VERSION}.tar.xz -C .cache-build
-            mv .cache-build/linux-${KERNEL_VERSION}* .cache-build/linux-${KERNEL_VERSION}
+          cd .cache-build
+          if [ ! -d "linux-${KERNEL_VERSION}" ]; then
+            tar -xf ../linux-${KERNEL_VERSION}.tar.xz
+            EXTRACTED_DIR=$(tar -tf ../linux-${KERNEL_VERSION}.tar.xz | head -1 | cut -f1 -d"/")
+            if [ "$EXTRACTED_DIR" != "linux-${KERNEL_VERSION}" ]; then
+              mv "$EXTRACTED_DIR" "linux-${KERNEL_VERSION}"
+            fi
           fi
+          cd ..
 
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             build-essential libncurses-dev bison flex libssl-dev libelf-dev \
-            dwarves bc pahole git make gcc xz-utils zstd cpio perl tar rsync
+            dwarves bc pahole git make gcc zstd cpio perl tar rsync
 
       - name: Configure kernel
         run: |
           cd .cache-build/linux-${KERNEL_VERSION}
           cp ../../hyperion.config .config
           make olddefconfig \
-            LOCALVERSION="-Hyperion-${HYPERION_VERSION}" \
+            LOCALVERSION="${LOCALVERSION}" \
             KBUILD_BUILD_USER="${KBUILD_BUILD_USER}" \
             KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST}"
 
@@ -100,42 +147,46 @@ jobs:
             git apply "$p" || patch -p1 < "$p"
           done || true
 
-      - name: Build kernel (incremental)
+      - name: Build kernel
         run: |
           cd .cache-build/linux-${KERNEL_VERSION}
           make -j$(nproc) \
-            LOCALVERSION="-Hyperion-${HYPERION_VERSION}" \
+            LOCALVERSION="${LOCALVERSION}" \
             KBUILD_BUILD_USER="${KBUILD_BUILD_USER}" \
             KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST}" \
             KBUILD_BUILD_TIMESTAMP="$(date -u '+%Y-%m-%d %H:%M:%S')" \
             2>&1 | tee build.log
 
-      - name: Verify build
-        run: |
-          ls -lh .cache-build/linux-${KERNEL_VERSION}/arch/x86/boot/bzImage
-          strings .cache-build/linux-${KERNEL_VERSION}/arch/x86/boot/bzImage | grep "Hyperion"
-
-      - name: Package artifacts into .tar.xz
+      - name: Package artifacts into .tar.zst
         run: |
           cd .cache-build/linux-${KERNEL_VERSION}
-          tar -cJf ../../Hyperion-Kernel-${KERNEL_VERSION}.tar.xz \
+          tar --zstd -cf ../../Hyperion-Kernel-${KERNEL_VERSION}.tar.zst \
             arch/x86/boot/bzImage \
             Module.symvers \
             build.log \
             ../../hyperion.config
 
-      - name: Create GitHub Release
+      - name: Generate SHA256 checksum
+        run: |
+          sha256sum Hyperion-Kernel-${KERNEL_VERSION}.tar.zst > Hyperion-Kernel-${KERNEL_VERSION}.sha256
+
+      - name: Clean temporary build dirs
+        run: rm -rf .cache-build/linux-${KERNEL_VERSION}
+
+      - name: Create GitHub Release with dynamic tag
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.KERNEL_VERSION }}-Hyperion-${{ env.HYPERION_VERSION }}
-          name: Linux ${{ env.KERNEL_VERSION }}-Hyperion-${{ env.HYPERION_VERSION }}
+          tag_name: ${{ env.TAG_NAME }}
+          name: Linux ${{ env.TAG_NAME }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload compressed kernel archive
+      - name: Upload compressed kernel archive and checksum
         uses: softprops/action-gh-release@v2
         with:
-          files: Hyperion-Kernel-${{ env.KERNEL_VERSION }}.tar.xz
+          files: |
+            Hyperion-Kernel-${KERNEL_VERSION}.tar.zst
+            Hyperion-Kernel-${KERNEL_VERSION}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
