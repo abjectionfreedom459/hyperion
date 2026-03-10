@@ -4,8 +4,8 @@ set -e
 
 echo "=== Hyperion BusyBox RootFS Builder ==="
 
-WORKDIR=~/hyperion-rootfs
-OUTFILE=~/rootfs.cpio.gz
+WORKDIR="$HOME/hyperion-rootfs"
+OUTFILE="$(pwd)/rootfs.cpio.gz"
 
 echo "[0/7] Installing required dependencies..."
 
@@ -17,9 +17,9 @@ gzip
 
 echo "[1/7] Cleaning previous build..."
 
-rm -rf $WORKDIR
-mkdir -p $WORKDIR
-cd $WORKDIR
+sudo rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
 
 echo "[2/7] Creating filesystem structure..."
 
@@ -38,7 +38,7 @@ root
 
 echo "[3/7] Installing BusyBox..."
 
-cp /bin/busybox bin/
+cp /bin/busybox bin/busybox
 
 echo "[4/7] Enabling ALL BusyBox commands..."
 
@@ -70,12 +70,12 @@ chmod +x init
 
 echo "[6/7] Creating device nodes..."
 
-sudo mknod -m 622 dev/console c 5 1 || true
-sudo mknod -m 666 dev/null c 1 3 || true
+sudo mknod -m 622 dev/console c 5 1 2>/dev/null || true
+sudo mknod -m 666 dev/null c 1 3 2>/dev/null || true
 
 echo "[7/7] Packing initramfs..."
 
-find . | cpio -o -H newc 2>/dev/null | gzip > $OUTFILE
+find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip > "$OUTFILE"
 
 echo
 echo "=== Done! ==="
