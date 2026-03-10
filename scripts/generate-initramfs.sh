@@ -1,19 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
-
-echo "=== Hyperion BusyBox RootFS Builder ==="
+echo "=== Hyperion BusyBox Initramfs Builder ==="
 
 WORKDIR="$HOME/hyperion-rootfs"
-OUTFILE="$(pwd)/rootfs.cpio.gz"
+OUTFILE="$(pwd)/initramfs.cpio.gz"
 
 echo "[0/7] Installing required dependencies..."
 
-sudo apt update
-sudo apt install -y \
-busybox-static \
-cpio \
-gzip
+sudo apt update -y
+sudo apt install -y busybox-static cpio gzip
 
 echo "[1/7] Cleaning previous build..."
 
@@ -25,39 +21,38 @@ echo "[2/7] Creating filesystem structure..."
 
 mkdir -p \
 bin \
-sbin \
 proc \
 sys \
 dev \
 etc \
-tmp \
-usr/bin \
-usr/sbin \
-mnt \
-root
+tmp
+
+chmod 1777 tmp
 
 echo "[3/7] Installing BusyBox..."
 
 cp /bin/busybox bin/
+chmod +x bin/busybox
 
-echo "[4/7] Enabling ALL BusyBox commands..."
+echo "[4/7] Creating shell symlink..."
 
-cd bin
-./busybox --install -s .
-cd ..
+ln -s busybox bin/sh
 
-echo "[5/7] Creating init script..."
+echo "[5/7] Creating init..."
 
 cat << 'EOF' > init
-#!/bin/busybox sh
+#!/bin/sh
+
+PATH=/bin
 
 echo
 echo "Hyperion Initramfs Booting..."
 echo
 
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev
+# Mount essential filesystems
+/bin/busybox mount -t proc proc /proc
+/bin/busybox mount -t sysfs sysfs /sys
+/bin/busybox mount -t devtmpfs devtmpfs /dev
 
 echo
 echo "Welcome to Hyperion Kernel!"
@@ -70,21 +65,32 @@ chmod +x init
 
 echo "[6/7] Creating device nodes..."
 
-sudo mknod -m 600 dev/console c 5 1 || true
-sudo mknod -m 666 dev/null c 1 3 || true
+sudo mknod -m 600 dev/console c 5 1 2>/dev/null || true
+sudo mknod -m 666 dev/null c 1 3 2>/dev/null || true
+sudo mknod -m 666 dev/tty c 5 0 2>/dev/null || true
 
 echo "[7/7] Packing initramfs..."
 
-find . -print0 \
-| cpio --null -ov --format=newc --owner root:root 2>/dev/null \
+find . \
+| cpio -o -H newc --owner root:root 2>/dev/null \
 | gzip -9 > "$OUTFILE"
 
 echo
-echo "=== Done! ==="
+echo "=== Done ==="
 echo
-echo "RootFS created:"
+echo "Initramfs created:"
 echo "$OUTFILE"
 echo
+
 echo "Copy to Windows artifacts folder:"
 echo
 echo "cp $OUTFILE /mnt/c/Users/(USERNAME)/path/to/wherever/you/like/it"
+echo
+
+echo "Run with QEMU:"
+echo
+echo "qemu-system-x86_64 ^"
+echo "  -kernel bzImage ^"
+echo "  -initrd initramfs.cpio.gz ^"
+echo "  -append \"console=ttyS0 init=/init loglevel=3 quiet\" ^"
+echo "  -nographic"
