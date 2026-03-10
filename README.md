@@ -278,7 +278,10 @@ sudo modprobe zram
 
 Before booting the kernel, generate the initramfs:
 
+```bash
+chmod +x ./scripts/generate-initramfs.sh
 ./scripts/generate-initramfs.sh
+```
 
 ### Installing a DKMS Module (example: v4l2loopback)
 
