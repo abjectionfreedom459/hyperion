@@ -179,16 +179,15 @@ jobs:
 
       - name: Configure kernel
         run: |
-          # Clean source tree if it exists (handles cached sources)
-          if [ -d "build-src/linux-${FULL_VERSION}" ]; then
-            make -C "build-src/linux-${FULL_VERSION}" mrproper
-          fi
+          # Always clean the source tree fully for out-of-tree build
+          rm -rf build-src/linux-${FULL_VERSION}  # remove cached source
+          tar -xf build-src/linux-${FULL_VERSION}.tar.xz -C build-src
           cp hyperion.config "build-src/linux-${FULL_VERSION}/.config"
           make -C "build-src/linux-${FULL_VERSION}" O="$(pwd)/build" olddefconfig \
             LOCALVERSION="${LOCALVERSION}" \
             KBUILD_BUILD_USER="${KBUILD_BUILD_USER}" \
             KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST}"
-
+            
       - name: Build kernel
         run: |
           BUILD_START=$(date +%s)
@@ -273,4 +272,3 @@ jobs:
             Hyperion-${{ env.FULL_VERSION }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
