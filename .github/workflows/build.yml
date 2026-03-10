@@ -136,7 +136,9 @@ jobs:
           cd .cache-build
           if [ ! -d "linux-${FULL_VERSION}" ]; then
             tar -xf ../linux-${FULL_VERSION}.tar.xz
-            EXTRACTED_DIR=$(tar -tf ../linux-${FULL_VERSION}.tar.xz | head -1 | cut -f1 -d"/")
+            # Find the extracted dir from the filesystem instead of re-running tar -tf,
+            # which causes "stdout: write error" when piped to head (broken pipe).
+            EXTRACTED_DIR=$(find . -maxdepth 1 -mindepth 1 -type d | head -1 | sed 's|^\./||')
             if [ "$EXTRACTED_DIR" != "linux-${FULL_VERSION}" ]; then
               mv "$EXTRACTED_DIR" "linux-${FULL_VERSION}"
             fi
