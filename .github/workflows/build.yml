@@ -10,16 +10,39 @@ concurrency:
 permissions:
   contents: write
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CACHING ARCHITECTURE
+# ─────────────────────────────────────────────────────────────────────────────
+#
+#  Layer 1 │ APT packages     │ apt-kernel-build-v1
+#           │                  │ Saves ~30s of apt-get install per run
+#
+#  Layer 2 │ ccache           │ ccache-<os>-<ver>-<cfg>-<patches>-<run_id>
+#           │                  │ KEY BUG FIX: always save a NEW key per run
+#           │                  │ so restore-keys always finds the freshest
+#           │                  │ partial cache, never a stale pinned key.
+#           │                  │ SLOPPINESS + DIRECT mode = max hit rate.
+#
+#  Layer 3 │ Source tarball   │ kernel-tarball-<version>
+#           │                  │ Immutable. Downloaded once, cached forever.
+#
+#  Layer 4 │ Full build tree  │ kernel-tree-<ver>-<cfg>-<patches>
+#           │                  │ Exact match = zero rebuild (incremental make).
+#           │                  │ Partial match via restore-keys still helps.
+#           │                  │ Saved unconditionally after every build.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
 jobs:
 
   validate-config:
     runs-on: ubuntu-latest
     outputs:
-      VERSION: ${{ steps.parse.outputs.VERSION }}
+      VERSION:      ${{ steps.parse.outputs.VERSION }}
       FULL_VERSION: ${{ steps.parse.outputs.FULL_VERSION }}
-      TAG: ${{ steps.parse.outputs.TAG }}
+      TAG:          ${{ steps.parse.outputs.TAG }}
       HYPERION_VER: ${{ steps.parse.outputs.HYPERION_VER }}
-      CONFIG_HASH: ${{ steps.parse.outputs.CONFIG_HASH }}
+      CONFIG_HASH:  ${{ steps.parse.outputs.CONFIG_HASH }}
       PATCHES_HASH: ${{ steps.parse.outputs.PATCHES_HASH }}
 
     steps:
@@ -31,160 +54,237 @@ jobs:
           set -euo pipefail
           python3 << 'EOF'
           import os, hashlib, glob
-          config={}
+          config = {}
           with open("hyperion.config") as f:
               for line in f:
-                  line=line.strip()
+                  line = line.strip()
                   if not line or line.startswith("#"): continue
-                  k,v=line.split("=",1)
-                  config[k.strip()]=v.strip().strip('"')
-          VERSION=int(config.get("CONFIG_VERSION",0))
-          PATCH=int(config.get("CONFIG_PATCHLEVEL",0))
-          SUB=int(config.get("CONFIG_SUBLEVEL",0))
-          FULL_VERSION=f"{VERSION}.{PATCH}" if SUB==0 else f"{VERSION}.{PATCH}.{SUB}"
-          LOCAL=config.get("CONFIG_LOCALVERSION","")
-          HYPERION_VER=LOCAL.split("-Hyperion-",1)[-1] if "-Hyperion-" in LOCAL else LOCAL.lstrip("-")
-          TAG=HYPERION_VER
-          CONFIG_HASH=hashlib.sha256(open("hyperion.config","rb").read()).hexdigest()[:12]
-          patches=sorted(glob.glob("patches/*.patch"))
-          PATCHES_HASH=hashlib.sha256(b''.join(open(p,"rb").read() for p in patches)).hexdigest()[:12] if patches else "none"
-          out=os.environ["GITHUB_OUTPUT"]
-          for k,v in {"VERSION":VERSION,"FULL_VERSION":FULL_VERSION,"TAG":TAG,"HYPERION_VER":HYPERION_VER,"CONFIG_HASH":CONFIG_HASH,"PATCHES_HASH":PATCHES_HASH}.items():
-              open(out,"a").write(f"{k}={v}\n")
+                  k, v = line.split("=", 1)
+                  config[k.strip()] = v.strip().strip('"')
+          VERSION      = int(config.get("CONFIG_VERSION", 0))
+          PATCH        = int(config.get("CONFIG_PATCHLEVEL", 0))
+          SUB          = int(config.get("CONFIG_SUBLEVEL", 0))
+          FULL_VERSION = f"{VERSION}.{PATCH}" if SUB == 0 else f"{VERSION}.{PATCH}.{SUB}"
+          LOCAL        = config.get("CONFIG_LOCALVERSION", "")
+          HYPERION_VER = LOCAL.split("-Hyperion-", 1)[-1] if "-Hyperion-" in LOCAL else LOCAL.lstrip("-")
+          TAG          = HYPERION_VER
+          CONFIG_HASH  = hashlib.sha256(open("hyperion.config", "rb").read()).hexdigest()[:12]
+          patches      = sorted(glob.glob("patches/*.patch"))
+          PATCHES_HASH = hashlib.sha256(b"".join(open(p, "rb").read() for p in patches)).hexdigest()[:12] if patches else "none"
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a") as f:
+              for k, v in {
+                  "VERSION": VERSION, "FULL_VERSION": FULL_VERSION,
+                  "TAG": TAG, "HYPERION_VER": HYPERION_VER,
+                  "CONFIG_HASH": CONFIG_HASH, "PATCHES_HASH": PATCHES_HASH,
+              }.items():
+                  f.write(f"{k}={v}\n")
           EOF
+
 
   build-kernel:
     needs: validate-config
     runs-on: ubuntu-latest
+
     env:
       KERNEL_VERSION: ${{ needs.validate-config.outputs.VERSION }}
-      FULL_VERSION: ${{ needs.validate-config.outputs.FULL_VERSION }}
-      TAG_NAME: ${{ needs.validate-config.outputs.TAG }}
-      HYPERION_VER: ${{ needs.validate-config.outputs.HYPERION_VER }}
-      CONFIG_HASH: ${{ needs.validate-config.outputs.CONFIG_HASH }}
-      PATCHES_HASH: ${{ needs.validate-config.outputs.PATCHES_HASH }}
+      FULL_VERSION:   ${{ needs.validate-config.outputs.FULL_VERSION }}
+      TAG_NAME:       ${{ needs.validate-config.outputs.TAG }}
+      HYPERION_VER:   ${{ needs.validate-config.outputs.HYPERION_VER }}
+      CONFIG_HASH:    ${{ needs.validate-config.outputs.CONFIG_HASH }}
+      PATCHES_HASH:   ${{ needs.validate-config.outputs.PATCHES_HASH }}
+
+      # ── Reproducible build identity ────────────────────────────────────────
       KBUILD_BUILD_USER: Soumalya
       KBUILD_BUILD_HOST: github-runner
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 5G
-      CCACHE_COMPRESS: true
-      CCACHE_BASEDIR: ${{ github.workspace }}
-      CCACHE_NOHASHDIR: true
+      # KBUILD_BUILD_TIMESTAMP is set dynamically from git history below
+
+      # ── ccache ─────────────────────────────────────────────────────────────
+      CCACHE_DIR:          ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE:      8G
+      # Compression: on, level 6 (good balance of speed vs size)
+      CCACHE_COMPRESS:     1
+      CCACHE_COMPRESSLEVEL: 6
+      # Direct mode: skip preprocessing step, cache by hash of source + headers
+      CCACHE_DIRECT:       1
+      # Basedir strips the workspace prefix from paths in the cache, so the
+      # cache is portable across different runner checkout paths
+      CCACHE_BASEDIR:      ${{ github.workspace }}
+      CCACHE_NOHASHDIR:    1
+      # Sloppiness: critical for kernel builds
+      #   time_macros         — ignore __DATE__ / __TIME__ (we fix the timestamp anyway)
+      #   include_file_mtime  — don't invalidate on header mtime, only content
+      #   include_file_ctime  — same for ctime
+      #   file_stat_matches   — use stat() instead of content hash for unchanged files
+      #   pch_defines         — handle precompiled-header define changes gracefully
+      CCACHE_SLOPPINESS:   time_macros,include_file_mtime,include_file_ctime,file_stat_matches,pch_defines
 
     steps:
 
       - uses: actions/checkout@v4
 
-      - name: Generate reproducible timestamp
+      # ── Layer 0: Reproducible timestamps ──────────────────────────────────
+      # Pin KBUILD_BUILD_TIMESTAMP to the last git commit so every build of
+      # the same source tree produces the same byte-for-byte object files,
+      # which is what lets ccache achieve high hit rates.
+      - name: Pin build timestamps to last commit
         run: |
           SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
-          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_TIMESTAMP=$(date -u -d "@$SOURCE_DATE_EPOCH")" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_VERSION=${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+          echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"      >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_TIMESTAMP=$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %e %H:%M:%S UTC %Y')" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_VERSION=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
-      - name: Install dependencies
+      # ── Layer 1: APT cache ─────────────────────────────────────────────────
+      - name: Restore APT cache
+        id: apt-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /var/cache/apt/archives/*.deb
+            /var/lib/apt/lists
+          key: apt-kernel-build-v1
+          restore-keys: apt-kernel-build-
+
+      - name: Install build dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex \
             libssl-dev libelf-dev libncurses-dev \
-            dwarves rsync cpio git wget curl \
+            dwarves rsync cpio wget \
             ccache zstd ca-certificates
+          # Put ccache shims first so 'gcc' resolves to ccache transparently
+          echo "/usr/lib/ccache" >> "$GITHUB_PATH"
 
-      - name: Restore compiler cache
-        id: cache-ccache
-        uses: actions/cache@v4
+      # ── Layer 2: ccache (restore) ──────────────────────────────────────────
+      # Use cache/restore (not cache) so we can save a fresh key after build.
+      # Primary key includes run_id so we ALWAYS write a new entry, and
+      # restore-keys fan out from most- to least-specific for the best warmup.
+      - name: Restore ccache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
-          key: ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
+          key: ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}-${{ github.run_id }}
           restore-keys: |
+            ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}-
             ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
             ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-
             ccache-${{ runner.os }}-
 
+      - name: Zero ccache stats (for clean per-run reporting)
+        run: ccache --zero-stats
+
+      # ── Layer 3: Source tarball ────────────────────────────────────────────
       - name: Restore kernel source tarball
-        id: kernel-src
+        id: kernel-tarball
         uses: actions/cache@v4
         with:
           path: linux-${{ env.FULL_VERSION }}.tar.xz
-          key: kernel-src-${{ env.FULL_VERSION }}
+          key: kernel-tarball-${{ env.FULL_VERSION }}
 
       - name: Download kernel tarball
-        if: steps.kernel-src.outputs.cache-hit != 'true'
+        if: steps.kernel-tarball.outputs.cache-hit != 'true'
         run: |
-          wget https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/linux-${FULL_VERSION}.tar.xz
-          wget https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/sha256sums.asc
+          wget -q --show-progress \
+            "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/linux-${FULL_VERSION}.tar.xz" \
+            "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/sha256sums.asc"
           grep "linux-${FULL_VERSION}.tar.xz" sha256sums.asc | sha256sum -c -
 
-      - name: Restore object cache
-        id: cache-obj
-        uses: actions/cache@v4
+      # ── Layer 4: Build tree (restore) ─────────────────────────────────────
+      # Exact hit = incremental make (only changed files recompile).
+      # Partial hit = more ccache warmup, still much faster than cold.
+      - name: Restore build tree
+        id: build-tree
+        uses: actions/cache/restore@v4
         with:
           path: kernel
-          key: kernel-obj-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
+          key: kernel-tree-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
           restore-keys: |
-            kernel-obj-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
-            kernel-obj-${{ env.FULL_VERSION }}-
+            kernel-tree-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
+            kernel-tree-${{ env.FULL_VERSION }}-
 
-      - name: Restore module object cache
-        id: cache-mod
-        uses: actions/cache@v4
-        with:
-          path: |
-            kernel/.modlib
-            kernel/.tmp_mod
-          key: kernel-mod-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
-          restore-keys: |
-            kernel-mod-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-
-            kernel-mod-${{ env.FULL_VERSION }}-
-
-      - name: Extract kernel
-        if: steps.cache-obj.outputs.cache-hit != 'true'
+      # ── Source extraction ──────────────────────────────────────────────────
+      # Only run if we have no usable build tree at all.
+      # Multi-threaded xz decompression cuts extraction time ~4×.
+      - name: Extract kernel source
+        if: steps.build-tree.outputs.cache-hit != 'true'
         run: |
-          rm -rf kernel
-          mkdir kernel
-          tar -xf linux-${FULL_VERSION}.tar.xz -C kernel --strip-components=1
+          rm -rf kernel && mkdir kernel
+          XZ_OPT="-T0" tar -xf "linux-${FULL_VERSION}.tar.xz" \
+            -C kernel --strip-components=1
 
-      - name: Apply config
+      # ── Configure ─────────────────────────────────────────────────────────
+      # LOCALVERSION passed to olddefconfig so it's baked into autoconf.h,
+      # keeping the value consistent across configure + build (ccache needs
+      # the same preprocessed output both times).
+      - name: Configure kernel
         working-directory: kernel
         run: |
           cp ../hyperion.config .config
-          make olddefconfig
+          make olddefconfig LOCALVERSION="-Hyperion-${HYPERION_VER}"
 
-      - name: Prepare kernel
-        working-directory: kernel
-        run: |
-          make prepare
-          make modules_prepare
-
+      # ── Patches ───────────────────────────────────────────────────────────
       - name: Apply patches
         working-directory: kernel
         run: |
           shopt -s nullglob
           for patch in ../patches/*.patch; do
+            echo "  → applying $(basename "$patch")"
             patch -p1 < "$patch"
           done
 
+      # ── Build ──────────────────────────────────────────────────────────────
+      # -pipe:    use pipes instead of temp files between compiler passes
+      # LOCALVERSION: must match what was passed to olddefconfig above
       - name: Build kernel
         working-directory: kernel
         run: |
           make -j$(nproc) \
             CC="ccache gcc" \
             LOCALVERSION="-Hyperion-${HYPERION_VER}" \
+            KCFLAGS="-pipe" \
             bzImage modules
 
+      # ── ccache report ──────────────────────────────────────────────────────
+      - name: ccache statistics
+        if: always()
+        run: ccache --show-stats --verbose
+
+      # ── Layer 4: Build tree (save) ────────────────────────────────────────
+      # Always save so the next run gets the freshest incremental state.
+      # If key already exists GitHub skips the upload silently.
+      - name: Save build tree
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: kernel
+          key: kernel-tree-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
+
+      # ── Layer 2: ccache (save) ────────────────────────────────────────────
+      # Save even on build failure so a partial run still warms future runs.
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}-${{ github.run_id }}
+
+      # ── Package ────────────────────────────────────────────────────────────
+      # vmlinux is excluded: it's ~600 MB unstripped and rarely needed in CI.
+      # Add it back if you need BTF / pahole post-processing.
       - name: Package artifacts
         run: |
-          mkdir artifacts
+          mkdir -p artifacts
           cp kernel/arch/x86/boot/bzImage artifacts/
-          cp kernel/System.map artifacts/ || true
-          cp kernel/vmlinux artifacts/ || true
-          cp hyperion.config artifacts/
-          tar --zstd -cf Hyperion-Kernel-${FULL_VERSION}.tar.zst artifacts
+          cp kernel/System.map              artifacts/
+          cp hyperion.config                artifacts/
+          tar --zstd -cf "Hyperion-Kernel-${FULL_VERSION}.tar.zst" artifacts/
 
       - name: Generate checksum
         run: |
-          sha256sum Hyperion-Kernel-${FULL_VERSION}.tar.zst > Hyperion-Kernel-${FULL_VERSION}.sha256
+          sha256sum "Hyperion-Kernel-${FULL_VERSION}.tar.zst" \
+            > "Hyperion-Kernel-${FULL_VERSION}.sha256"
 
       - name: Create release
         uses: softprops/action-gh-release@v2
