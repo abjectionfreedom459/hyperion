@@ -7,7 +7,7 @@
  ██╔══██║  ╚██╔╝  ██╔═══╝ ██╔══╝  ██╔══██╗██║██║   ██║██║╚██╗██║
  ██║  ██║   ██║   ██║     ███████╗██║  ██║██║╚██████╔╝██║ ╚████║
  ╚═╝  ╚═╝   ╚═╝   ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝
-                  <strong style="color:#1e88e5;">H Y P E R I O N · v3.0.0</strong>
+                  <strong style="color:#1e88e5;">H Y P E R I O N · v2.0.2</strong>
       <span style="color:#ff6f00;">Linux 6.19.6</span> <span style="color:#e53935;">·</span> <span style="color:#00e676;">Universal</span> <span style="color:#e53935;">·</span> <span style="color:#ffea00;">Stable</span> <span style="color:#e53935;">·</span> <span style="color:#e040fb;">God-Tier Daily Driver</span>
 </pre>
 
@@ -22,7 +22,7 @@
 <img src="https://img.shields.io/github/actions/workflow/status/pro-grammer-SD/hyperion/build.yml?style=for-the-badge&label=Kernel%20Build&color=1e88e5" alt="Build Status">
 </a>
 <a href="https://kernel.org">
-<img src="https://img.shields.io/badge/kernel-6.19.6--Hyperion--3.0.0-blue?style=for-the-badge&color=43a047" alt="Kernel Version">
+<img src="https://img.shields.io/badge/kernel-6.19.6--Hyperion--2.0.2-blue?style=for-the-badge&color=43a047" alt="Kernel Version">
 </a>
 <a href="#supported-architectures">
 <img src="https://img.shields.io/badge/arch-x86__64-green?style=for-the-badge&color=f9a825" alt="Architecture">
@@ -45,7 +45,7 @@
 ## Table of Contents
 
 - [Overview](#overview)
-- [What's New in v3.0.0](#whats-new-in-v300)
+- [What's New in v2.0.2](#whats-new-in-v300)
 - [Philosophy](#philosophy)
 - [Key Features](#key-features)
 - [Monolithic Architecture](#monolithic-architecture)
@@ -81,9 +81,9 @@
 
 **Hyperion Kernel** is a custom Linux 6.19.6 kernel build engineered to be the definitive daily-driver kernel for every kind of Linux user — gamers, developers, modders, tinkerers, and hobbyists. It combines the best configuration practices from CachyOS, XanMod, Nobara, Liquorix, and upstream Linux into a single, fully integrated, zero-compromise `bzImage`.
 
-**v3.0.0 is the Universal Daily-Driver Pass** — building on the Monolithic Integration Pass of v2.0.1, this release extends hardware coverage to every mainstream chipset, adds full compatibility with all major Linux distributions through multi-LSM support, fills every real-world hardware gap identified across thousands of deployed systems, and adds entire subsystems that were previously absent: Thunderbolt/USB4, WireGuard, V4L2/UVC webcam, SoC audio, drawing tablet drivers, modern Realtek and Qualcomm Wi-Fi, and comprehensive Bluetooth UART support.
+**v2.0.2 is the Universal Daily-Driver Pass** — building on the Monolithic Integration Pass of v2.0.2, this release extends hardware coverage to every mainstream chipset, adds full compatibility with all major Linux distributions through multi-LSM support, fills every real-world hardware gap identified across thousands of deployed systems, and adds entire subsystems that were previously absent: Thunderbolt/USB4, WireGuard, V4L2/UVC webcam, SoC audio, drawing tablet drivers, modern Realtek and Qualcomm Wi-Fi, and comprehensive Bluetooth UART support.
 
-Hyperion v3.0.0 is designed for:
+Hyperion v2.0.2 is designed for:
 
 - **Gamers** — PREEMPT, sched_ext, BFQ, UCLAMP, BBR, zero-latency crypto, and full Waydroid Android gaming
 - **Developers** — full DKMS compatibility, IKHEADERS, IKCONFIG, MODVERSIONS, and KVM with OVMF/UEFI
@@ -92,13 +92,13 @@ Hyperion v3.0.0 is designed for:
 - **Distro-agnostic users** — SELinux (Fedora/RHEL), AppArmor (Ubuntu/Arch), TOMOYO (openSUSE) all compiled in
 
 ```
-uname -r  →  6.19.6-Hyperion-3.0.0
-uname -v  →  #1 SMP PREEMPT Linux 6.19.6-Hyperion-3.0.0 (Soumalya Das) 2026
+uname -r  →  6.19.6-Hyperion-2.0.2
+uname -v  →  #1 SMP PREEMPT Linux 6.19.6-Hyperion-2.0.2 (Soumalya Das) 2026
 ```
 
 ---
 
-## What's New in v3.0.0
+## What's New in v2.0.2
 
 > The **Universal Daily-Driver Pass** — 39 new config groups, 5 new subsystems, full distro compatibility.
 
@@ -176,7 +176,7 @@ All modern laptop Bluetooth chips use UART transport, not USB. These were previo
 | `CONFIG_BT_A2MP=y` | Bluetooth AMP — high-speed BT data links |
 
 ### 🖥️ Virtualization — Gaps from Changelog Now in Main Config
-Items documented in the v2.0.1 changelog but missing from the actual config block are now fully present:
+Items documented in the v2.0.2 changelog but missing from the actual config block are now fully present:
 
 | Addition | Impact |
 |---|---|
@@ -230,7 +230,7 @@ Hyperion is built on five principles:
 
 | Category | Feature | Details |
 |---|---|---|
-| **Identity** | Custom branding | `uname -r` → `6.19.6-Hyperion-3.0.0` |
+| **Identity** | Custom branding | `uname -r` → `6.19.6-Hyperion-2.0.2` |
 | **Build** | Monolithic image | All in-tree modules promoted to `=y` — zero module-load latency |
 | **Build** | ZSTD compression | ~40% faster boot than GZIP on NVMe (Phoronix) |
 | **Build** | KALLSYMS_ALL | Full symbol table — required for sched_ext BPF introspection |
@@ -550,7 +550,7 @@ Waydroid uses LXC containers, not KVM. Every dependency is built-in and audited:
 
 ## Security
 
-Hyperion v3.0.0 ships with three LSMs compiled in simultaneously. The active LSM is selected by the distro or user via the `security=` kernel command-line parameter. This makes one kernel binary work correctly on every mainstream Linux distribution without recompiling.
+Hyperion v2.0.2 ships with three LSMs compiled in simultaneously. The active LSM is selected by the distro or user via the `security=` kernel command-line parameter. This makes one kernel binary work correctly on every mainstream Linux distribution without recompiling.
 
 | LSM | Config | Default for | Activation |
 |---|---|---|---|
@@ -631,8 +631,8 @@ Additional hardening active by default:
 Hyperion treats module compatibility as a **first-class feature**, not an afterthought.
 
 **What this means in practice:**
-- Kernel headers installed to `/usr/src/linux-headers-6.19.6-Hyperion-3.0.0/`
-- Build symlink `/lib/modules/6.19.6-Hyperion-3.0.0/build` always points to the correct headers directory
+- Kernel headers installed to `/usr/src/linux-headers-6.19.6-Hyperion-2.0.2/`
+- Build symlink `/lib/modules/6.19.6-Hyperion-2.0.2/build` always points to the correct headers directory
 - `CONFIG_IKHEADERS=y` makes headers available at `/sys/kernel/kheaders.tar.xz` as a runtime fallback for any DKMS module that needs them
 - `CONFIG_IKCONFIG=y` + `CONFIG_IKCONFIG_PROC=y` — running config always readable at `/proc/config.gz`
 - `CONFIG_MODVERSIONS=y` — every exported symbol carries a CRC checksum; mismatched modules are rejected cleanly at `insmod` with a clear error, not a kernel panic
@@ -655,7 +655,7 @@ Hyperion treats module compatibility as a **first-class feature**, not an aftert
 
 ## Distro Compatibility
 
-Hyperion v3.0.0 is the first release explicitly designed and tested for distribution-agnostic deployment. A single `bzImage` + `initramfs` pair boots and operates correctly on every mainstream Linux distribution.
+Hyperion v2.0.2 is the first release explicitly designed and tested for distribution-agnostic deployment. A single `bzImage` + `initramfs` pair boots and operates correctly on every mainstream Linux distribution.
 
 | Distribution | Status | LSM Active | Package Manager |
 |---|---|---|---|
@@ -746,7 +746,7 @@ make olddefconfig
 make menuconfig
 
 # 5. Build (use all cores)
-make -j$(nproc) LOCALVERSION="-Hyperion-3.0.0"
+make -j$(nproc) LOCALVERSION="-Hyperion-2.0.2"
 
 # 6. Build modules (DKMS infrastructure)
 make modules -j$(nproc)
@@ -785,14 +785,14 @@ sudo reboot
 
 # Verify identity
 uname -r
-# Expected: 6.19.6-Hyperion-3.0.0
+# Expected: 6.19.6-Hyperion-2.0.2
 
 uname -v
-# Expected: #1 SMP PREEMPT Linux 6.19.6-Hyperion-3.0.0 (Soumalya Das) 2026
+# Expected: #1 SMP PREEMPT Linux 6.19.6-Hyperion-2.0.2 (Soumalya Das) 2026
 
 # Verify headers symlink
 ls -la /lib/modules/$(uname -r)/build
-# Should point to /usr/src/linux-headers-6.19.6-Hyperion-3.0.0
+# Should point to /usr/src/linux-headers-6.19.6-Hyperion-2.0.2
 
 # Verify IKCONFIG (running config)
 zcat /proc/config.gz | grep "CONFIG_HYPERION"
@@ -822,19 +822,19 @@ Before booting the kernel, generate the initramfs. With all drivers built-in, th
 
 ```bash
 # mkinitcpio (Arch)
-sudo mkinitcpio -k 6.19.6-Hyperion-3.0.0 \
-  -g /boot/initramfs-6.19.6-Hyperion-3.0.0.img
+sudo mkinitcpio -k 6.19.6-Hyperion-2.0.2 \
+  -g /boot/initramfs-6.19.6-Hyperion-2.0.2.img
 
 # Or use the provided script
 chmod +x ./scripts/generate-initramfs.sh
 sudo ./scripts/generate-initramfs.sh
 
 # dracut (Fedora/RHEL/openSUSE)
-sudo dracut --force /boot/initramfs-6.19.6-Hyperion-3.0.0.img \
-  6.19.6-Hyperion-3.0.0
+sudo dracut --force /boot/initramfs-6.19.6-Hyperion-2.0.2.img \
+  6.19.6-Hyperion-2.0.2
 
 # initramfs-tools (Debian/Ubuntu)
-sudo update-initramfs -c -k 6.19.6-Hyperion-3.0.0
+sudo update-initramfs -c -k 6.19.6-Hyperion-2.0.2
 ```
 
 ### Installing a DKMS Module (example: v4l2loopback)
@@ -848,7 +848,7 @@ yay -S v4l2loopback-dkms
 
 # Verify
 sudo dkms status
-# v4l2loopback/0.12.x, 6.19.6-Hyperion-3.0.0, x86_64: installed
+# v4l2loopback/0.12.x, 6.19.6-Hyperion-2.0.2, x86_64: installed
 ```
 
 ### SELinux Setup (Fedora/RHEL users)
@@ -900,7 +900,7 @@ See [docs/troubleshooting.md](docs/troubleshooting.md) for the full guide.
 ```bash
 # Check if kernel is running
 uname -r
-# Expected: 6.19.6-Hyperion-3.0.0
+# Expected: 6.19.6-Hyperion-2.0.2
 
 # Check if headers are present
 ls /usr/src/linux-headers-$(uname -r)/
@@ -1015,6 +1015,6 @@ The Linux kernel itself is licensed under **GPL-2.0-only** as required by Linus 
 
 *Built with precision. Tuned for humans. Named after a Titan.*
 
-**Hyperion Kernel v3.0.0** · Soumalya Das · 2026
+**Hyperion Kernel v2.0.2** · Soumalya Das · 2026
 
 </div>
