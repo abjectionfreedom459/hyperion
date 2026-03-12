@@ -214,25 +214,43 @@ jobs:
           XZ_OPT="-T0" tar -xf "linux-${FULL_VERSION}.tar.xz" \
             -C kernel --strip-components=1
 
+      # ── Patches ───────────────────────────────────────────────────────────
+      # MUST run before Configure: the rtl8192eu patch adds new Kconfig
+      # entries that olddefconfig must see to resolve CONFIG_RTL8192EU.
+      #
+      # Cache-aware: a sentinel file (.patches-applied) records the hash of
+      # the patch set that was applied to this tree.  If the restored build
+      # tree already carries the correct patches (exact or partial cache hit
+      # with identical PATCHES_HASH) we skip re-application entirely —
+      # avoiding "file already exists" / reverse-patch failures.
+      # When PATCHES_HASH changes the cache key changes too, so a fresh tree
+      # is extracted and the sentinel will not be present.
+      - name: Apply patches
+        working-directory: kernel
+        run: |
+          shopt -s nullglob
+          SENTINEL=".patches-applied"
+          if [ -f "$SENTINEL" ] && [ "$(cat $SENTINEL)" = "${PATCHES_HASH}" ]; then
+            echo "  ✓ patches already applied (hash ${PATCHES_HASH}), skipping"
+          else
+            for patch in ../patches/*.patch; do
+              echo "  → applying $(basename "$patch")"
+              patch -p1 --fuzz=5 < "$patch"
+            done
+            echo "${PATCHES_HASH}" > "$SENTINEL"
+          fi
+
       # ── Configure ─────────────────────────────────────────────────────────
-      # LOCALVERSION passed to olddefconfig so it's baked into autoconf.h,
-      # keeping the value consistent across configure + build (ccache needs
-      # the same preprocessed output both times).
+      # Runs after patches so new Kconfig symbols (e.g. CONFIG_RTL8192EU)
+      # are visible to olddefconfig and get resolved to their defaults.
+      # LOCALVERSION passed here so it's baked into autoconf.h, keeping the
+      # value consistent across configure + build (ccache needs the same
+      # preprocessed output both times).
       - name: Configure kernel
         working-directory: kernel
         run: |
           cp ../hyperion.config .config
           make olddefconfig LOCALVERSION="-Hyperion-${HYPERION_VER}"
-
-      # ── Patches ───────────────────────────────────────────────────────────
-      - name: Apply patches
-        working-directory: kernel
-        run: |
-          shopt -s nullglob
-          for patch in ../patches/*.patch; do
-            echo "  → applying $(basename "$patch")"
-            patch -p1 --fuzz=5 < "$patch"
-          done
 
       # ── Build ──────────────────────────────────────────────────────────────
       # -pipe:    use pipes instead of temp files between compiler passes
