@@ -257,7 +257,8 @@ jobs:
             CC="ccache gcc" \
             LOCALVERSION="-Hyperion-${HYPERION_VER}" \
             KCFLAGS="-pipe" \
-            bzImage modules
+            bzImage modules 2>&1 | tee /tmp/build.log; \
+          grep -E "^.*(error:|undefined|fatal).*$" /tmp/build.log | tail -40 || true
 
       # ── ccache report ──────────────────────────────────────────────────────
       - name: ccache statistics
