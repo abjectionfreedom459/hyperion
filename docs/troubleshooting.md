@@ -7,14 +7,14 @@
 dmesg | tail -20
 
 # Verify firmware exists
-ls -la /lib/firmware/rtlwifi/rtl8192eufw.bin
+
 
 # Reload module
-sudo modprobe -r rtl8192eu
-sudo modprobe rtl8192eu
+
+sudo 
 
 # Check module dependencies
-modinfo rtl8192eu
+
 ```
 
 ## Device Not Recognized
@@ -24,7 +24,7 @@ modinfo rtl8192eu
 lsusb | grep -i realtek
 
 # Force module load
-sudo modprobe rtl8192eu
+sudo 
 dmesg | grep -i rtl
 
 # Check interface

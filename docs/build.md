@@ -4,73 +4,161 @@
 
 ### Arch Linux
 ```bash
-sudo pacman -S base-devel linux-firmware
+sudo pacman -S base-devel bc kmod cpio flex bison libelf pahole git
 ```
 
-### Debian/Ubuntu
+### Debian / Ubuntu
 ```bash
-sudo apt install build-essential linux-firmware bc kmod cpio flex bison
+sudo apt install build-essential bc bison flex libssl-dev libelf-dev \
+  libncurses-dev dwarves rsync cpio wget git pahole
 ```
 
-### Fedora
+### Fedora / RHEL
 ```bash
-sudo dnf install gcc kernel-devel kernel-headers linux-firmware
+sudo dnf install gcc make bison flex elfutils-libelf-devel \
+  openssl-devel ncurses-devel bc git pahole
 ```
+
+---
 
 ## Build Steps
 
-### 1. Extract Kernel Source
+### 1. Get the kernel source
+
 ```bash
-tar xzf linux-6.19.6.tar.gz
+wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.19.6.tar.xz
+tar -xf linux-6.19.6.tar.xz
 cd linux-6.19.6
 ```
 
-### 2. Apply Hyperion Patch
+### 2. Apply patches
+
 ```bash
-patch -p1 < ../patches/0001-rtl8192eu-add-in-tree-driver.patch
+for patch in ../patches/*.patch; do
+  echo "  → applying $(basename "$patch")"
+  patch -p1 --fuzz=5 < "$patch"
+done
 ```
 
-### 3. Configure Kernel
+The only patch in v2.2.2 adds a documentation file — it is safe on any
+Linux 6.x tree and cannot conflict with upstream changes.
+
+### 3. Apply Hyperion config
+
 ```bash
-# Use Hyperion config
 cp ../hyperion.config .config
+make olddefconfig LOCALVERSION="-Hyperion-2.2.2"
+```
 
-# Or customize
+`make olddefconfig` resolves all new symbols to their Kconfig defaults.
+After this step the key performance options are verified present:
+
+```bash
+grep -E "^CONFIG_(BPF_JIT|BPF_JIT_ALWAYS_ON|SCHED_CLASS_EXT|FS_VERITY|\
+SECURITY_IPE|ZRAM_MULTI_COMP|SECURITY_LANDLOCK|STACKTRACE)=" .config
+```
+
+### 4. Optional: Review with menuconfig
+
+```bash
 make menuconfig
-# Enable: Device Drivers → Network device support → Wireless LAN → RTL8192EU
 ```
 
-### 4. Build
+Notable locations for the new v2.2.2 options:
+
+| Config | menuconfig path |
+|---|---|
+| `CONFIG_BPF_JIT_ALWAYS_ON` | General setup → BPF subsystem |
+| `CONFIG_SCHED_CLASS_EXT` | General setup → CPU scheduler |
+| `CONFIG_FS_VERITY` | File systems → FS Verity |
+| `CONFIG_FS_ENCRYPTION` | File systems → FS Encryption |
+| `CONFIG_UNICODE` | File systems → Native language support |
+| `CONFIG_ZRAM_MULTI_COMP` | Device Drivers → Block devices → ZRAM |
+| `CONFIG_SECURITY_IPE` | Security options → IPE |
+| `CONFIG_SECURITY_LANDLOCK` | Security options → Landlock |
+
+### 5. Build
+
 ```bash
-make -j$(nproc)
+make -j$(nproc) \
+  LOCALVERSION="-Hyperion-2.2.2" \
+  KCFLAGS="-pipe" \
+  bzImage modules
 ```
 
-### 5. Install
+### 6. Install
+
 ```bash
-# As root
 sudo make modules_install
 sudo make install
 
 # Update bootloader
-sudo update-grub  # Debian/Ubuntu
-sudo grub2-mkconfig -o /boot/grub2/grub.cfg  # Fedora
+sudo update-grub                               # Debian/Ubuntu
+sudo grub2-mkconfig -o /boot/grub2/grub.cfg   # Fedora/RHEL
+sudo grub-mkconfig -o /boot/grub/grub.cfg      # Arch
 ```
 
-## Automatic Build
+---
+
+## Automated Build
 
 ```bash
-./scripts/build-kernel.sh
+# Full automated build
+bash scripts/build-kernel.sh --auto
+
+# With interactive config review step
+bash scripts/build-kernel.sh --interactive
+
+# With a specific kernel source directory
+bash scripts/build-kernel.sh --source /path/to/linux-6.19.6
 ```
 
-## Verification
+---
+
+## CI Build (GitHub Actions)
+
+The `.github/workflows/build.yml` pipeline:
+
+1. Downloads `linux-6.19.6.tar.xz` (cached by tarball hash)
+2. Applies all `patches/*.patch` in sorted order
+3. Copies `hyperion.config` → `.config` and runs `make olddefconfig`
+4. Builds `bzImage modules` with ccache acceleration
+5. Packages `bzImage + System.map + hyperion.config` as a release artifact
+
+Build trigger: `workflow_dispatch` (manual). All caches keyed on the
+config hash and patch hash so a config-only change invalidates the
+correct cache layers.
+
+---
+
+## Post-Build Verification
 
 ```bash
-# Check driver loaded
-lsmod | grep rtl8192eu
+# Verify uname
+uname -r
+# Expected: 6.19.6-Hyperion-2.2.2
 
-# Check device
-lsusb | grep -i realtek
+# Verify BPF JIT is active
+cat /proc/sys/net/core/bpf_jit_enable
+# Expected: 1
 
-# Check network interface
-ip link show
+# Verify sched-ext is available
+ls /sys/kernel/sched_ext/
+# Expected: state  ops_name  (when a scx scheduler is loaded)
+
+# Verify IPE is present
+ls /sys/kernel/security/ipe/
+# Expected: policies  audit  enforce  success_audit
+
+# Verify ZRAM multi-comp
+cat /sys/block/zram0/comp_algorithm
+# Expected: [zstd] lzo lzo-rle lz4 lz4hc 842
+
+# Verify Landlock is supported
+grep landlock /sys/kernel/security/lsm
+# Expected: landlock listed
+
+# Verify FS verity
+tune2fs -l /dev/sdXN 2>/dev/null | grep -i verity
+# Or: getfattr -n user.verity.digest /some/file
 ```

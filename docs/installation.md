@@ -27,8 +27,8 @@ uname -r
 
 ### 3. Load WiFi Driver
 ```bash
-modprobe rtl8192eu
-lsmod | grep rtl8192eu
+
+
 ```
 
 ### 4. Configure Network
