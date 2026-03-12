@@ -14,22 +14,24 @@ permissions:
 # CACHING ARCHITECTURE
 # ─────────────────────────────────────────────────────────────────────────────
 #
-#  Layer 1 │ APT packages     │ apt-kernel-build-v1
-#           │                  │ Saves ~30s of apt-get install per run
-#
-#  Layer 2 │ ccache           │ ccache-<os>-<ver>-<cfg>-<patches>-<run_id>
-#           │                  │ KEY BUG FIX: always save a NEW key per run
-#           │                  │ so restore-keys always finds the freshest
+#  Layer 1 │ ccache           │ ccache-<os>-<ver>-<cfg>-<patches>-<run_id>
+#           │                  │ Always saves a NEW key per run so
+#           │                  │ restore-keys always finds the freshest
 #           │                  │ partial cache, never a stale pinned key.
 #           │                  │ SLOPPINESS + DIRECT mode = max hit rate.
 #
-#  Layer 3 │ Source tarball   │ kernel-tarball-<version>
+#  Layer 2 │ Source tarball   │ kernel-tarball-<version>
 #           │                  │ Immutable. Downloaded once, cached forever.
 #
-#  Layer 4 │ Full build tree  │ kernel-tree-<ver>-<cfg>-<patches>
+#  Layer 3 │ Full build tree  │ kernel-tree-<ver>-<cfg>-<patches>
 #           │                  │ Exact match = zero rebuild (incremental make).
 #           │                  │ Partial match via restore-keys still helps.
 #           │                  │ Saved unconditionally after every build.
+#
+#  NOTE: APT package caching is intentionally omitted. actions/cache cannot
+#  reliably handle /var/cache/apt glob paths or /var/lib/apt/lists — the key
+#  never matches on restore, producing "Cache not found" noise on every run
+#  with zero benefit. apt-get install is fast enough (~30s) on its own.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -134,17 +136,10 @@ jobs:
           echo "KBUILD_BUILD_TIMESTAMP=$(date -u -d "@$SOURCE_DATE_EPOCH" '+%a %b %e %H:%M:%S UTC %Y')" >> "$GITHUB_ENV"
           echo "KBUILD_BUILD_VERSION=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
 
-      # ── Layer 1: APT cache ─────────────────────────────────────────────────
-      - name: Restore APT cache
-        id: apt-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            /var/cache/apt/archives/*.deb
-            /var/lib/apt/lists
-          key: apt-kernel-build-v1
-          restore-keys: apt-kernel-build-
-
+      # ── APT: no caching — actions/cache cannot reliably handle system paths
+      # (/var/cache/apt glob and /var/lib/apt/lists vary per runner, causing
+      # permanent "Cache not found" noise with zero restore benefit).
+      # apt-get install is fast enough (~30s) without a cache layer.
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
@@ -156,7 +151,7 @@ jobs:
           # Put ccache shims first so 'gcc' resolves to ccache transparently
           echo "/usr/lib/ccache" >> "$GITHUB_PATH"
 
-      # ── Layer 2: ccache (restore) ──────────────────────────────────────────
+      # ── Layer 1: ccache (restore) ──────────────────────────────────────────
       # Use cache/restore (not cache) so we can save a fresh key after build.
       # Primary key includes run_id so we ALWAYS write a new entry, and
       # restore-keys fan out from most- to least-specific for the best warmup.
@@ -175,7 +170,7 @@ jobs:
       - name: Zero ccache stats (for clean per-run reporting)
         run: ccache --zero-stats
 
-      # ── Layer 3: Source tarball ────────────────────────────────────────────
+      # ── Layer 2: Source tarball ────────────────────────────────────────────
       - name: Restore kernel source tarball
         id: kernel-tarball
         uses: actions/cache@v4
@@ -191,7 +186,7 @@ jobs:
             "https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION}.x/sha256sums.asc"
           grep "linux-${FULL_VERSION}.tar.xz" sha256sums.asc | sha256sum -c -
 
-      # ── Layer 4: Build tree (restore) ─────────────────────────────────────
+      # ── Layer 3: Build tree (restore) ─────────────────────────────────────
       # Exact hit = incremental make (only changed files recompile).
       # Partial hit = more ccache warmup, still much faster than cold.
       - name: Restore build tree
@@ -214,17 +209,18 @@ jobs:
           XZ_OPT="-T0" tar -xf "linux-${FULL_VERSION}.tar.xz" \
             -C kernel --strip-components=1
 
+      # ── Configure ─────────────────────────────────────────────────────────
+      # LOCALVERSION passed to olddefconfig so it's baked into autoconf.h,
+      # keeping the value consistent across configure + build (ccache needs
+      # the same preprocessed output both times).
       # ── Patches ───────────────────────────────────────────────────────────
       # MUST run before Configure: the rtl8192eu patch adds new Kconfig
       # entries that olddefconfig must see to resolve CONFIG_RTL8192EU.
       #
       # Cache-aware: a sentinel file (.patches-applied) records the hash of
-      # the patch set that was applied to this tree.  If the restored build
-      # tree already carries the correct patches (exact or partial cache hit
-      # with identical PATCHES_HASH) we skip re-application entirely —
-      # avoiding "file already exists" / reverse-patch failures.
-      # When PATCHES_HASH changes the cache key changes too, so a fresh tree
-      # is extracted and the sentinel will not be present.
+      # the patch set applied to this tree. If a restored build tree already
+      # carries the correct patches we skip re-application — avoiding
+      # "file already exists" / reverse-patch failures on cache hits.
       - name: Apply patches
         working-directory: kernel
         run: |
@@ -243,14 +239,13 @@ jobs:
       # ── Configure ─────────────────────────────────────────────────────────
       # Runs after patches so new Kconfig symbols (e.g. CONFIG_RTL8192EU)
       # are visible to olddefconfig and get resolved to their defaults.
-      # LOCALVERSION passed here so it's baked into autoconf.h, keeping the
-      # value consistent across configure + build (ccache needs the same
-      # preprocessed output both times).
+      # LOCALVERSION is baked into autoconf.h here, keeping it consistent
+      # across configure + build so ccache gets maximum hit rate.
       - name: Configure kernel
         working-directory: kernel
         run: |
           cp ../hyperion.config .config
-          make olddefconfig LOCALVERSION="-Hyperion-${HYPERION_VER}"
+          make olddefconfig LOCALVERSION="-Hyperion-${HYPERION_VER}" 
 
       # ── Build ──────────────────────────────────────────────────────────────
       # -pipe:    use pipes instead of temp files between compiler passes
@@ -269,7 +264,7 @@ jobs:
         if: always()
         run: ccache --show-stats --verbose
 
-      # ── Layer 4: Build tree (save) ────────────────────────────────────────
+      # ── Layer 3: Build tree (save) ────────────────────────────────────────
       # Always save so the next run gets the freshest incremental state.
       # If key already exists GitHub skips the upload silently.
       - name: Save build tree
@@ -279,7 +274,7 @@ jobs:
           path: kernel
           key: kernel-tree-${{ env.FULL_VERSION }}-${{ env.CONFIG_HASH }}-${{ env.PATCHES_HASH }}
 
-      # ── Layer 2: ccache (save) ────────────────────────────────────────────
+      # ── Layer 1: ccache (save) ────────────────────────────────────────────
       # Save even on build failure so a partial run still warms future runs.
       - name: Save ccache
         if: always()
