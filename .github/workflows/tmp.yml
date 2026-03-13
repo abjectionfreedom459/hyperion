@@ -1,0 +1,41 @@
+name: Bump semver 2.2.3 → 2.2.4
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  replace-semver:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Regex replace semver everywhere
+        run: |
+          # Find all text files (excluding .git)
+          find . -path "./.git" -prune -o -type f -print0 \
+          | xargs -0 sed -Ei 's/2\.2\.3/2.2.4/g'
+
+          # Only commit if there are changes
+          if git diff --cached --quiet && git diff --quiet; then
+            echo "No matches for 2.2.3 found."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "chore: bump semver 2.2.3 → 2.2.4"
+          git push
+
+      - name: Done
+        run: echo "✔ semver bump completed."
